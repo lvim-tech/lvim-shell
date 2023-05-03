@@ -3,7 +3,7 @@ local config, method
 local base_config = {
 	ui = {
 		float = {
-			border = "none",
+			border = { " ", " ", " ", " ", " ", " ", " ", " " },
 			float_hl = "Normal",
 			border_hl = "FloatBorder",
 			blend = 0,
@@ -22,7 +22,7 @@ local base_config = {
 		horz_split = "<C-h>",
 		tabedit = "<C-t>",
 		edit = "<C-e>",
-		ESC = "<ESC>",
+		close = "<C-q>",
 	},
 }
 
@@ -53,7 +53,6 @@ local function on_exit()
 		func()
 	end
 	check_file("/tmp/lvim-shell")
-	check_file(vim.fn.getenv("HOME") .. "/.cache/fff/opened_file")
 	vim.cmd([[ checktime ]])
 end
 
@@ -90,7 +89,13 @@ local function post_creation(suffix)
 		'<C-\\><C-n>:lua require("lvim-shell").setMethod("vsplit | edit")<CR>i' .. suffix,
 		{ silent = true }
 	)
-	vim.api.nvim_buf_set_keymap(M.buf, "t", "<ESC>", config.mappings.ESC, { silent = true })
+	vim.api.nvim_buf_set_keymap(
+		M.buf,
+		"t",
+		config.mappings.close,
+		"<c-\\><c-n><cmd>close<cr><c-w><c-p>",
+		{ silent = true }
+	)
 end
 
 M.float = function(cmd, suffix, user_config)

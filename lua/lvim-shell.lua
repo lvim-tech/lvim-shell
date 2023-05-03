@@ -1,4 +1,13 @@
 local config, method
+local group = vim.api.nvim_create_augroup("LvimShell", {
+	clear = true,
+})
+
+vim.api.nvim_create_autocmd("FileType", {
+	pattern = { "LvimShell" },
+	command = "setlocal signcolumn=no nonumber norelativenumber",
+	group = group,
+})
 
 local base_config = {
 	ui = {
@@ -60,33 +69,33 @@ local function post_creation(suffix)
 	for _, func in ipairs(config.on_open) do
 		func()
 	end
-	vim.api.nvim_buf_set_option(M.buf, "filetype", "LVIM-SHELL")
+	vim.api.nvim_buf_set_option(M.buf, "filetype", "LvimShell")
 	vim.api.nvim_buf_set_keymap(
 		M.buf,
 		"t",
 		config.mappings.edit,
-		'<C-\\><C-n>:lua require("lvim-shell").setMethod("edit")<CR>i' .. suffix,
+		'<C-\\><C-n>:lua require("lvim-shell").set_method("edit")<CR>i' .. suffix,
 		{ silent = true }
 	)
 	vim.api.nvim_buf_set_keymap(
 		M.buf,
 		"t",
 		config.mappings.tabedit,
-		'<C-\\><C-n>:lua require("lvim-shell").setMethod("tabedit")<CR>i' .. suffix,
+		'<C-\\><C-n>:lua require("lvim-shell").set_method("tabedit")<CR>i' .. suffix,
 		{ silent = true }
 	)
 	vim.api.nvim_buf_set_keymap(
 		M.buf,
 		"t",
 		config.mappings.horz_split,
-		'<C-\\><C-n>:lua require("lvim-shell").setMethod("split | edit")<CR>i' .. suffix,
+		'<C-\\><C-n>:lua require("lvim-shell").set_method("split | edit")<CR>i' .. suffix,
 		{ silent = true }
 	)
 	vim.api.nvim_buf_set_keymap(
 		M.buf,
 		"t",
 		config.mappings.vert_split,
-		'<C-\\><C-n>:lua require("lvim-shell").setMethod("vsplit | edit")<CR>i' .. suffix,
+		'<C-\\><C-n>:lua require("lvim-shell").set_method("vsplit | edit")<CR>i' .. suffix,
 		{ silent = true }
 	)
 	vim.api.nvim_buf_set_keymap(

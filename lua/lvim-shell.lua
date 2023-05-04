@@ -31,7 +31,7 @@ local base_config = {
         vsplit = "<C-v>",
         tabedit = "<C-t>",
         edit = "<C-e>",
-        close = "<C-q>",
+        close = "<Esc>",
     },
 }
 

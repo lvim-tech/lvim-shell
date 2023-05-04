@@ -27,8 +27,8 @@ local base_config = {
     on_close = {},
     on_open = {},
     mappings = {
-        vert_split = "<C-v>",
-        horz_split = "<C-h>",
+        split = "<C-x>",
+        vsplit = "<C-v>",
         tabedit = "<C-t>",
         edit = "<C-e>",
         close = "<C-q>",
@@ -87,14 +87,14 @@ local function post_creation(suffix)
     vim.api.nvim_buf_set_keymap(
         M.buf,
         "t",
-        config.mappings.horz_split,
+        config.mappings.split,
         '<C-\\><C-n>:lua require("lvim-shell").set_method("split | edit")<CR>i' .. suffix,
         { silent = true }
     )
     vim.api.nvim_buf_set_keymap(
         M.buf,
         "t",
-        config.mappings.vert_split,
+        config.mappings.vsplit,
         '<C-\\><C-n>:lua require("lvim-shell").set_method("vsplit | edit")<CR>i' .. suffix,
         { silent = true }
     )

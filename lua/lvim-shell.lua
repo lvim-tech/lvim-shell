@@ -60,14 +60,15 @@ local function check_files()
                     text = text,
                 })
             end
-            vim.fn.setqflist(qf_list, "r")
-            vim.cmd("copen")
+            method = config.edit_cmd
             io.close(io.open("/tmp/lvim-shell_qf", "r"))
             os.remove("/tmp/lvim-shell_qf")
             if io.open("/tmp/lvim-shell", "r") ~= nil then
                 io.close(io.open("/tmp/lvim-shell", "r"))
                 os.remove("/tmp/lvim-shell")
             end
+            vim.fn.setqflist(qf_list, "r")
+            vim.cmd("copen")
         elseif io.open("/tmp/lvim-shell", "r") ~= nil then
             local qf_list = {}
             for line in io.lines("/tmp/lvim-shell") do
@@ -75,14 +76,15 @@ local function check_files()
                     filename = line,
                 })
             end
-            vim.fn.setqflist(qf_list, "r")
-            vim.cmd("copen")
+            method = config.edit_cmd
             io.close(io.open("/tmp/lvim-shell", "r"))
             os.remove("/tmp/lvim-shell")
             if io.open("/tmp/lvim-shell_qf", "r") ~= nil then
                 io.close(io.open("/tmp/lvim-shell_qf", "r"))
                 os.remove("/tmp/lvim-shell_qf")
             end
+            vim.fn.setqflist(qf_list, "r")
+            vim.cmd("copen")
         end
     else
         if io.open("/tmp/lvim-shell", "r") ~= nil then

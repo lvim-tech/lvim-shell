@@ -182,7 +182,7 @@ M.float = function(cmd, suffix, user_config)
     vim.fn.termopen(cmd, {
         on_exit = on_exit,
     })
-    vim.api.nvim_command("startinsert")
+    vim.cmd("startinsert")
     vim.api.nvim_win_set_option(
         M.win,
         "winhl",
@@ -210,7 +210,7 @@ M.split = function(cmd, suffix, user_config)
     vim.fn.termopen(cmd, {
         on_exit = on_exit,
     })
-    vim.api.nvim_command("startinsert")
+    vim.cmd("startinsert")
     M.close_cmd = function()
         vim.cmd("bdelete!")
     end

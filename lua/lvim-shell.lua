@@ -32,6 +32,7 @@ local base_config = {
         tabedit = "<C-t>",
         edit = "<C-e>",
         close = "<Esc>",
+        qf = nil,
     },
 }
 
@@ -45,14 +46,57 @@ function M.set_method(opt)
     method = opt
 end
 
-local function check_file(file)
-    if io.open(file, "r") ~= nil then
-        for line in io.lines(file) do
-            vim.cmd(method .. " " .. vim.fn.fnameescape(line))
+local function check_files()
+    if method == "qf" then
+        if io.open("/tmp/lvim-shell_qf", "r") ~= nil then
+            local qf_list = {}
+            for line in io.lines("/tmp/lvim-shell_qf") do
+                local pattern = "([^:]+):([^:]+):(.+)"
+                local filename, lnum, text = string.match(line, pattern)
+                table.insert(qf_list, {
+                    filename = filename,
+                    lnum = lnum,
+                    end_lnum = lnum,
+                    text = text,
+                })
+            end
+            vim.fn.setqflist(qf_list, "r")
+            vim.cmd("copen")
+            io.close(io.open("/tmp/lvim-shell_qf", "r"))
+            os.remove("/tmp/lvim-shell_qf")
+            if io.open("/tmp/lvim-shell", "r") ~= nil then
+                io.close(io.open("/tmp/lvim-shell", "r"))
+                os.remove("/tmp/lvim-shell")
+            end
+        elseif io.open("/tmp/lvim-shell", "r") ~= nil then
+            local qf_list = {}
+            for line in io.lines("/tmp/lvim-shell") do
+                table.insert(qf_list, {
+                    filename = line,
+                })
+            end
+            vim.fn.setqflist(qf_list, "r")
+            vim.cmd("copen")
+            io.close(io.open("/tmp/lvim-shell", "r"))
+            os.remove("/tmp/lvim-shell")
+            if io.open("/tmp/lvim-shell_qf", "r") ~= nil then
+                io.close(io.open("/tmp/lvim-shell_qf", "r"))
+                os.remove("/tmp/lvim-shell_qf")
+            end
         end
-        method = config.edit_cmd
-        io.close(io.open(file, "r"))
-        os.remove(file)
+    else
+        if io.open("/tmp/lvim-shell", "r") ~= nil then
+            for line in io.lines("/tmp/lvim-shell") do
+                vim.cmd(method .. " " .. vim.fn.fnameescape(line))
+            end
+            method = config.edit_cmd
+            io.close(io.open("/tmp/lvim-shell", "r"))
+            os.remove("/tmp/lvim-shell")
+            if io.open("/tmp/lvim-shell_qf", "r") ~= nil then
+                io.close(io.open("/tmp/lvim-shell_qf", "r"))
+                os.remove("/tmp/lvim-shell_qf")
+            end
+        end
     end
 end
 
@@ -61,7 +105,7 @@ local function on_exit()
     for _, func in ipairs(config.on_close) do
         func()
     end
-    check_file("/tmp/lvim-shell")
+    check_files()
     vim.cmd([[ checktime ]])
 end
 
@@ -70,40 +114,43 @@ local function post_creation(suffix)
         func()
     end
     vim.api.nvim_buf_set_option(M.buf, "filetype", "LvimShell")
-    vim.api.nvim_buf_set_keymap(
-        M.buf,
+    vim.keymap.set(
         "t",
         config.mappings.edit,
-        '<C-\\><C-n>:lua require("lvim-shell").set_method("edit")<CR>i' .. suffix,
-        { silent = true }
+        "<C-\\><C-n>:lua require('lvim-shell').set_method('edit')<CR>i" .. suffix,
+        { buffer = M.buf, noremap = true, silent = true }
     )
-    vim.api.nvim_buf_set_keymap(
-        M.buf,
+    vim.keymap.set(
         "t",
         config.mappings.tabedit,
-        '<C-\\><C-n>:lua require("lvim-shell").set_method("tabedit")<CR>i' .. suffix,
-        { silent = true }
+        "<C-\\><C-n>:lua require('lvim-shell').set_method('tabedit')<CR>i" .. suffix,
+        { buffer = M.buf, noremap = true, silent = true }
     )
-    vim.api.nvim_buf_set_keymap(
-        M.buf,
+    vim.keymap.set(
         "t",
         config.mappings.split,
-        '<C-\\><C-n>:lua require("lvim-shell").set_method("split | edit")<CR>i' .. suffix,
-        { silent = true }
+        "<C-\\><C-n>:lua require('lvim-shell').set_method('split | edit')<CR>i" .. suffix,
+        { buffer = M.buf, noremap = true, silent = true }
     )
-    vim.api.nvim_buf_set_keymap(
-        M.buf,
+    vim.keymap.set(
         "t",
         config.mappings.vsplit,
-        '<C-\\><C-n>:lua require("lvim-shell").set_method("vsplit | edit")<CR>i' .. suffix,
-        { silent = true }
+        "<C-\\><C-n>:lua require('lvim-shell').set_method('vsplit | edit')<CR>i" .. suffix,
+        { buffer = M.buf, noremap = true, silent = true }
     )
-    vim.api.nvim_buf_set_keymap(
-        M.buf,
+    if config.mappings.qf ~= nil then
+        vim.keymap.set(
+            "t",
+            config.mappings.qf,
+            "<C-\\><C-n>:lua require('lvim-shell').set_method('qf')<CR>i" .. suffix,
+            { buffer = M.buf, noremap = true, silent = true }
+        )
+    end
+    vim.keymap.set(
         "t",
         config.mappings.close,
-        "<c-\\><c-n><cmd>close<cr><c-w><c-p>",
-        { silent = true }
+        "<C-\\><C-n><cmd>close<CR><C-w><C-p>",
+        { buffer = M.buf, noremap = true, silent = true }
     )
 end
 

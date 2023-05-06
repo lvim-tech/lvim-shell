@@ -51,12 +51,14 @@ local function check_files()
         if io.open("/tmp/lvim-shell_qf", "r") ~= nil then
             local qf_list = {}
             for line in io.lines("/tmp/lvim-shell_qf") do
-                local pattern = "([^:]+):([^:]+):(.+)"
-                local filename, lnum, text = string.match(line, pattern)
+                local pattern = "([^:]+):([^:]+):([^:]+):(.+)"
+                local filename, line_number, column, text = string.match(line, pattern)
                 table.insert(qf_list, {
-                    filename = filename,
-                    lnum = lnum,
-                    end_lnum = lnum,
+                    filename = filename ~= nil and filename or "",
+                    lnum = line_number ~= nil and line_number or 1,
+                    end_lnum = line_number ~= nil and line_number or 1,
+                    col = column ~= nil and column or 1,
+                    col_end = column ~= nil and column or 1,
                     text = text,
                 })
             end
@@ -74,6 +76,10 @@ local function check_files()
             for line in io.lines("/tmp/lvim-shell") do
                 table.insert(qf_list, {
                     filename = line,
+                    lnum = 1,
+                    end_lnum = 1,
+                    col = 1,
+                    col_end = 1,
                 })
             end
             method = config.edit_cmd

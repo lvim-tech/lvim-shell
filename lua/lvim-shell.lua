@@ -34,6 +34,7 @@ local base_config = {
         close = "<Esc>",
         qf = nil,
     },
+    env = nil,
 }
 
 local M = {}
@@ -121,7 +122,7 @@ local function post_creation(suffix)
     for _, func in ipairs(config.on_open) do
         func()
     end
-    vim.api.nvim_buf_set_option(M.buf, "filetype", "LvimShell")
+    vim.api.nvim_buf_set_option(M.buf, "filetype", "lvim_shell")
     vim.keymap.set(
         "t",
         config.mappings.edit,
@@ -187,6 +188,7 @@ M.float = function(cmd, suffix, user_config)
     post_creation(suffix)
     vim.fn.termopen(cmd, {
         on_exit = on_exit,
+        env = config.env,
     })
     vim.cmd("startinsert")
     vim.api.nvim_win_set_option(
@@ -215,6 +217,7 @@ M.split = function(cmd, suffix, user_config)
     post_creation(suffix)
     vim.fn.termopen(cmd, {
         on_exit = on_exit,
+        env = config.env,
     })
     vim.cmd("startinsert")
     M.close_cmd = function()

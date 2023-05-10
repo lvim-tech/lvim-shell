@@ -26,14 +26,7 @@ local base_config = {
     edit_cmd = "edit",
     on_close = {},
     on_open = {},
-    mappings = {
-        split = "<C-x>",
-        vsplit = "<C-v>",
-        tabedit = "<C-t>",
-        edit = "<C-e>",
-        close = "<Esc>",
-        qf = nil,
-    },
+    mappings = {},
     env = nil,
 }
 
@@ -123,30 +116,38 @@ local function post_creation(suffix)
         func()
     end
     vim.api.nvim_buf_set_option(M.buf, "filetype", "lvim_shell")
-    vim.keymap.set(
-        "t",
-        config.mappings.edit,
-        "<C-\\><C-n>:lua require('lvim-shell').set_method('edit')<CR>i" .. suffix,
-        { buffer = M.buf, noremap = true, silent = true }
-    )
-    vim.keymap.set(
-        "t",
-        config.mappings.tabedit,
-        "<C-\\><C-n>:lua require('lvim-shell').set_method('tabedit')<CR>i" .. suffix,
-        { buffer = M.buf, noremap = true, silent = true }
-    )
-    vim.keymap.set(
-        "t",
-        config.mappings.split,
-        "<C-\\><C-n>:lua require('lvim-shell').set_method('split | edit')<CR>i" .. suffix,
-        { buffer = M.buf, noremap = true, silent = true }
-    )
-    vim.keymap.set(
-        "t",
-        config.mappings.vsplit,
-        "<C-\\><C-n>:lua require('lvim-shell').set_method('vsplit | edit')<CR>i" .. suffix,
-        { buffer = M.buf, noremap = true, silent = true }
-    )
+    if config.mappings.edit ~= nil then
+        vim.keymap.set(
+            "t",
+            config.mappings.edit,
+            "<C-\\><C-n>:lua require('lvim-shell').set_method('edit')<CR>i" .. suffix,
+            { buffer = M.buf, noremap = true, silent = true }
+        )
+    end
+    if config.mappings.tabedit ~= nil then
+        vim.keymap.set(
+            "t",
+            config.mappings.tabedit,
+            "<C-\\><C-n>:lua require('lvim-shell').set_method('tabedit')<CR>i" .. suffix,
+            { buffer = M.buf, noremap = true, silent = true }
+        )
+    end
+    if config.mappings.split ~= nil then
+        vim.keymap.set(
+            "t",
+            config.mappings.split,
+            "<C-\\><C-n>:lua require('lvim-shell').set_method('split | edit')<CR>i" .. suffix,
+            { buffer = M.buf, noremap = true, silent = true }
+        )
+    end
+    if config.mappings.vsplit ~= nil then
+        vim.keymap.set(
+            "t",
+            config.mappings.vsplit,
+            "<C-\\><C-n>:lua require('lvim-shell').set_method('vsplit | edit')<CR>i" .. suffix,
+            { buffer = M.buf, noremap = true, silent = true }
+        )
+    end
     if config.mappings.qf ~= nil then
         vim.keymap.set(
             "t",

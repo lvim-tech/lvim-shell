@@ -121,7 +121,7 @@ local function post_creation(suffix)
             "t",
             config.mappings.edit,
             "<C-\\><C-n>:lua require('lvim-shell').set_method('edit')<CR>i" .. suffix,
-            { buffer = M.buf, noremap = true, silent = true }
+            { buffer = true, noremap = true, silent = true }
         )
     end
     if config.mappings.tabedit ~= nil then
@@ -129,7 +129,7 @@ local function post_creation(suffix)
             "t",
             config.mappings.tabedit,
             "<C-\\><C-n>:lua require('lvim-shell').set_method('tabedit')<CR>i" .. suffix,
-            { buffer = M.buf, noremap = true, silent = true }
+            { buffer = true, noremap = true, silent = true }
         )
     end
     if config.mappings.split ~= nil then
@@ -137,7 +137,7 @@ local function post_creation(suffix)
             "t",
             config.mappings.split,
             "<C-\\><C-n>:lua require('lvim-shell').set_method('split | edit')<CR>i" .. suffix,
-            { buffer = M.buf, noremap = true, silent = true }
+            { buffer = true, noremap = true, silent = true }
         )
     end
     if config.mappings.vsplit ~= nil then
@@ -145,7 +145,7 @@ local function post_creation(suffix)
             "t",
             config.mappings.vsplit,
             "<C-\\><C-n>:lua require('lvim-shell').set_method('vsplit | edit')<CR>i" .. suffix,
-            { buffer = M.buf, noremap = true, silent = true }
+            { buffer = true, noremap = true, silent = true }
         )
     end
     if config.mappings.qf ~= nil then
@@ -153,14 +153,14 @@ local function post_creation(suffix)
             "t",
             config.mappings.qf,
             "<C-\\><C-n>:lua require('lvim-shell').set_method('qf')<CR>i" .. suffix,
-            { buffer = M.buf, noremap = true, silent = true }
+            { buffer = true, noremap = true, silent = true }
         )
     end
     vim.keymap.set(
         "t",
         config.mappings.close,
         "<C-\\><C-n><cmd>close<CR><C-w><C-p>",
-        { buffer = M.buf, noremap = true, silent = true }
+        { buffer = true, noremap = true, silent = true }
     )
 end
 

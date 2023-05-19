@@ -42,19 +42,22 @@ end
 
 local function check_files()
     if method == "qf" then
-        if io.open("/tmp/lvim-shell_qf", "r") ~= nil then
-            local f = io.open("/tmp/lvim-shell-qf-title", "r")
-            local title = "LVIM SHELL"
-            if f then
-                title = f:read()
-                f:close()
-                os.remove("/tmp/lvim-shell-qf-title")
+        local f = io.open("/tmp/lvim-shell-query", "r")
+        local title = "LVIM SHELL"
+        if f then
+            local line = f:read()
+            if line ~= "" then
+                title = line
             end
+            f:close()
+            os.remove("/tmp/lvim-shell-query")
+        end
+        if io.open("/tmp/lvim-shell-qf", "r") ~= nil then
             local qf_list = {
                 title = title,
                 items = {},
             }
-            for line in io.lines("/tmp/lvim-shell_qf") do
+            for line in io.lines("/tmp/lvim-shell-qf") do
                 local pattern = "([^:]+):([^:]+):([^:]+):(.+)"
                 local filename, line_number, column, text = string.match(line, pattern)
                 table.insert(qf_list.items, {
@@ -67,8 +70,8 @@ local function check_files()
                 })
             end
             method = config.edit_cmd
-            io.close(io.open("/tmp/lvim-shell_qf", "r"))
-            os.remove("/tmp/lvim-shell_qf")
+            io.close(io.open("/tmp/lvim-shell-qf", "r"))
+            os.remove("/tmp/lvim-shell-qf")
             if io.open("/tmp/lvim-shell", "r") ~= nil then
                 io.close(io.open("/tmp/lvim-shell", "r"))
                 os.remove("/tmp/lvim-shell")
@@ -76,13 +79,6 @@ local function check_files()
             vim.fn.setqflist({}, " ", qf_list)
             vim.cmd("copen")
         elseif io.open("/tmp/lvim-shell", "r") ~= nil then
-            local f = io.open("/tmp/lvim-shell-qf-title", "r")
-            local title = "LVIM SHELL"
-            if f then
-                title = f:read()
-                f:close()
-                os.remove("/tmp/lvim-shell-qf-title")
-            end
             local qf_list = {
                 title = title,
                 items = {},
@@ -99,9 +95,9 @@ local function check_files()
             method = config.edit_cmd
             io.close(io.open("/tmp/lvim-shell", "r"))
             os.remove("/tmp/lvim-shell")
-            if io.open("/tmp/lvim-shell_qf", "r") ~= nil then
-                io.close(io.open("/tmp/lvim-shell_qf", "r"))
-                os.remove("/tmp/lvim-shell_qf")
+            if io.open("/tmp/lvim-shell-qf", "r") ~= nil then
+                io.close(io.open("/tmp/lvim-shell-qf", "r"))
+                os.remove("/tmp/lvim-shell-qf")
             end
             vim.fn.setqflist({}, " ", qf_list)
             vim.cmd("copen")
@@ -114,10 +110,9 @@ local function check_files()
             method = config.edit_cmd
             io.close(io.open("/tmp/lvim-shell", "r"))
             os.remove("/tmp/lvim-shell")
-            if io.open("/tmp/lvim-shell_qf", "r") ~= nil then
-                io.close(io.open("/tmp/lvim-shell_qf", "r"))
-                os.remove("/tmp/lvim-shell_qf")
-                -- os.remove("/tmp/lvim-shell-qf-title")
+            if io.open("/tmp/lvim-shell-qf", "r") ~= nil then
+                io.close(io.open("/tmp/lvim-shell-qf", "r"))
+                os.remove("/tmp/lvim-shell-qf")
             end
         end
     end

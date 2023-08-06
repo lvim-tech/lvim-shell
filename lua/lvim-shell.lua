@@ -11,6 +11,7 @@ vim.api.nvim_create_autocmd("FileType", {
 
 local base_config = {
     ui = {
+        fix_float_y_position = -3,
         float = {
             border = { " ", " ", " ", " ", " ", " ", " ", " " },
             float_hl = "Normal",
@@ -18,8 +19,8 @@ local base_config = {
             blend = 0,
             height = 1,
             width = 1,
-            x = 0.5,
-            y = 0.5,
+            x = 0,
+            y = 1,
         },
         split = "belowright new", -- `leftabove new`, `rightbelow new`, `leftabove vnew 24`, `rightbelow vnew 24`
     },
@@ -188,10 +189,11 @@ M.float = function(cmd, suffix, user_config)
     end
     method = config.edit_cmd
     M.buf = vim.api.nvim_create_buf(false, true)
-    local win_height = math.ceil(vim.api.nvim_get_option("lines") * config.ui.float.height - 4)
+    local win_height = math.ceil(vim.api.nvim_get_option("lines") * config.ui.float.height)
     local win_width = math.ceil(vim.api.nvim_get_option("columns") * config.ui.float.width)
     local col = math.ceil((vim.api.nvim_get_option("columns") - win_width) * config.ui.float.x)
-    local row = math.ceil((vim.api.nvim_get_option("lines") - win_height) * config.ui.float.y - 1)
+    local row =
+        math.ceil((vim.api.nvim_get_option("lines") - win_height) * config.ui.float.y + config.ui.fix_float_y_position)
     local opts = {
         style = "minimal",
         relative = "editor",

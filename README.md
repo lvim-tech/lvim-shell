@@ -29,32 +29,36 @@ use({
 ## Default configuration
 
 ```lua
-{
-  ui = {
-    float = {
-      border = { " ", " ", " ", " ", " ", " ", " ", " " },
-      float_hl = "Normal",
-      border_hl = "FloatBorder",
-      blend = 0,
-      height = 1,
-      width = 1,
-      x = 0.5,
-      y = 0.5,
+local base_config = {
+    ui = {
+        float = {
+            border = { " ", " ", " ", " ", " ", " ", " ", " " },
+            float_hl = "NormalFloat",
+            border_hl = "FloatBorder",
+            blend = 0,
+            height = 0.9,
+            width = 0.9,
+            x = 0.5,
+            y = 0.5,
+            backdrop = true,
+            backdrop_hl = "NormalFloat",
+            backdrop_blend = 40,
+            zindex = 50,
+        },
+        split = "belowright new",
     },
-    split = "belowright new", -- `leftabove new`, `rightbelow new`, `leftabove vnew 24`, `rightbelow vnew 24`
-  },
-  edit_cmd = "edit",
-  on_close = {},
-  on_open = {},
-  mappings = {
-    -- split = "<C-x>",
-    -- vsplit = "<C-v>",
-    -- tabedit = "<C-t>",
-    -- edit = "<C-e>",
-    -- close = "<Esc>",
-    -- qf = <C-q>,
-  },
-  env = nil,
+    edit_cmd = "edit",
+    on_close = {},
+    on_open = {},
+    mappings = {
+        split = "<C-x>",
+        vsplit = "<C-v>",
+        tabedit = "<C-t>",
+        edit = "<C-e>",
+        close = "<q>",
+        qf = "<C-q>",
+    },
+    env = nil,
 }
 ```
 
@@ -80,33 +84,53 @@ lvim_shell.float(exe_file, "<CR>", {
 ```lua
 local lvim_shell = require("lvim-shell")
 
--- Ranger
+_G.Neomutt = function(dir)
+    dir = dir or "."
+    lvim_shell.split("TERM=kitty-direct neomutt", "<CR>", config)
+end
+
 _G.Ranger = function(dir)
     dir = dir or "."
-    lvim_shell.float("ranger --choosefiles=/tmp/lvim-shell " .. dir, "l")
+    lvim_shell.float("ranger --choosefiles=/tmp/lvim-shell " .. dir, "l", config)
 end
-vim.cmd("command! -nargs=? -complete=dir Ranger :lua _G.Ranger(<f-args>)")
-vim.keymap.set("n", "<C-c>r", function()
-    vim.cmd("Ranger")
-end, { noremap = true, silent = true, desc = "Ranger" })
 
--- Vifm
 _G.Vifm = function(dir)
     dir = dir or "."
-    lvim_shell.float("vifm --choose-files /tmp/lvim-shell " .. dir, "l")
+    lvim_shell.float("vifm --choose-files /tmp/lvim-shell " .. dir, "l", config)
 end
-vim.cmd("command! -nargs=? -complete=dir Vifm :lua _G.Ranger(<f-args>)")
-vim.keymap.set("n", "<C-c>v", function()
-    vim.cmd("Ranger")
-end, { noremap = true, silent = true, desc = "Vifm" })
 
--- Lazygit
-_G.Lazygit = function(dir)
+_G.LazyGit = function(dir)
     dir = dir or "."
-    lvim_shell.float("lazygit -w " .. dir, "l")
+    lvim_shell.float("lazygit -w " .. dir, "<CR>", nil)
 end
-vim.cmd("command! -nargs=? -complete=dir Lazygit :lua _G.Lazygit(<f-args>)")
-vim.keymap.set("n", "<C-c>g", function()
-    vim.cmd("Lazygit")
-end, { noremap = true, silent = true, desc = "Lazygit" })
+
+_G.LazyDocker = function()
+    lvim_shell.float("lazydocker", "<CR>", config)
+end
+
+local file_managers = { "Ranger", "Vifm" }
+local executable = vim.fn.executable
+
+for _, fm in ipairs(file_managers) do
+    if executable(vim.fn.tolower(fm)) == 1 then
+        vim.api.nvim_create_user_command(fm, function(opts)
+            _G.Ranger[fm](opts.args)
+        end, {
+            nargs = "?",
+            complete = "dir",
+        })
+    end
+end
+
+vim.api.nvim_create_user_command("Neomutt", function(opts)
+    _G.Neomutt(opts.args)
+end, { nargs = "?" })
+
+vim.api.nvim_create_user_command("LazyGit", function(opts)
+    _G.LazyGit(opts.args)
+end, { nargs = "?" })
+
+vim.api.nvim_create_user_command("LazyDocker", function()
+    _G.LazyDocker()
+end, {})
 ```

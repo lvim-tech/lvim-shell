@@ -25,6 +25,7 @@ local base_config = {
             backdrop_hl = "NormalFloat",
             backdrop_blend = 40,
             zindex = 50,
+            resize_delay = 100,
         },
         split = "belowright new",
     },
@@ -50,6 +51,7 @@ local M = {
     backdrop_win = nil,
     backdrop_buf = nil,
     is_closing = false,
+    resize_autocmd_id = nil,
 }
 
 local function set_config(user_config)
@@ -154,6 +156,11 @@ local function do_close()
         end
     end
 
+    if M.resize_autocmd_id then
+        vim.api.nvim_del_autocmd(M.resize_autocmd_id)
+        M.resize_autocmd_id = nil
+    end
+
     if M.backdrop_win and vim.api.nvim_win_is_valid(M.backdrop_win) then
         pcall(vim.api.nvim_win_close, M.backdrop_win, true)
     end
@@ -234,7 +241,7 @@ local function setup_mappings(suffix)
             "t",
             config.mappings.qf,
             "<C-\\><C-n>:lua require('lvim-shell').set_method('qf')<CR>i" .. suffix,
-            { buffer = M.buf, noremap = true, silent = true }
+            { buffer = true, noremap = true, silent = true }
         )
     end
     if config.mappings.close ~= nil then
@@ -254,6 +261,29 @@ local function post_creation(suffix)
     if vim.api.nvim_buf_is_valid(M.buf) then
         vim.api.nvim_set_option_value("bufhidden", "hide", { buf = M.buf })
         vim.api.nvim_set_option_value("buflisted", false, { buf = M.buf })
+    end
+end
+
+local function resize_float_window()
+    if M.win and vim.api.nvim_win_is_valid(M.win) then
+        vim.defer_fn(function()
+            local lines = vim.api.nvim_get_option_value("lines", {})
+            local columns = vim.api.nvim_get_option_value("columns", {})
+            local win_height = math.floor(lines * config.ui.float.height)
+            local win_width = math.floor(columns * config.ui.float.width)
+            local has_border = config.ui.float.border and #config.ui.float.border > 0
+            local border_size = has_border and 2 or 0
+            local total_height = win_height + border_size
+            local total_width = win_width + border_size
+            local col = math.floor((columns - total_width) * (config.ui.float.x or 0.5))
+            local row = math.floor((lines - total_height) * (config.ui.float.y or 0.5))
+            vim.api.nvim_win_set_config(M.win, {
+                width = win_width,
+                height = win_height,
+                row = row,
+                col = col,
+            })
+        end, config.ui.float.resize_delay)
     end
 end
 
@@ -320,6 +350,11 @@ M.float = function(cmd, suffix, user_config)
     M.win = vim.api.nvim_open_win(M.buf, true, opts)
     M.close_handler = create_close_handler()
     post_creation(suffix)
+
+    M.resize_autocmd_id = vim.api.nvim_create_autocmd("VimResized", {
+        group = group,
+        callback = resize_float_window,
+    })
 
     M.term_job_id = vim.fn.termopen(cmd, {
         on_exit = function(job_id, _)

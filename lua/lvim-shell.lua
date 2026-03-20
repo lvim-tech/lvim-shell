@@ -38,13 +38,13 @@ local base_config = {
         tabedit = "<C-t>",
         edit = "<C-e>",
         close = "<q>",
+        esc = "<Esc>",
         qf = "<C-q>",
     },
     env = nil,
 }
 
 local M = {
-    close_handler = nil,
     term_job_id = nil,
     win = nil,
     buf = nil,
@@ -74,14 +74,11 @@ local function check_files()
             f:close()
             os.remove("/tmp/lvim-shell-query")
         end
+        local qf_pattern = "([^:]+):([^:]+):([^:]+):(.+)"
         if io.open("/tmp/lvim-shell-qf", "r") ~= nil then
-            local qf_list = {
-                title = title,
-                items = {},
-            }
+            local qf_list = { title = title, items = {} }
             for line in io.lines("/tmp/lvim-shell-qf") do
-                local pattern = "([^:]+):([^:]+):([^:]+):(.+)"
-                local filename, line_number, column, text = string.match(line, pattern)
+                local filename, line_number, column, text = string.match(line, qf_pattern)
                 table.insert(qf_list.items, {
                     filename = filename ~= nil and filename or "",
                     lnum = tonumber(line_number) or 1,
@@ -92,19 +89,12 @@ local function check_files()
                 })
             end
             method = config.edit_cmd
-            io.close(io.open("/tmp/lvim-shell-qf", "r"))
             os.remove("/tmp/lvim-shell-qf")
-            if io.open("/tmp/lvim-shell", "r") ~= nil then
-                io.close(io.open("/tmp/lvim-shell", "r"))
-                os.remove("/tmp/lvim-shell")
-            end
+            os.remove("/tmp/lvim-shell")
             vim.fn.setqflist({}, " ", qf_list)
             vim.cmd("copen")
         elseif io.open("/tmp/lvim-shell", "r") ~= nil then
-            local qf_list = {
-                title = title,
-                items = {},
-            }
+            local qf_list = { title = title, items = {} }
             for line in io.lines("/tmp/lvim-shell") do
                 table.insert(qf_list.items, {
                     filename = line,
@@ -115,12 +105,8 @@ local function check_files()
                 })
             end
             method = config.edit_cmd
-            io.close(io.open("/tmp/lvim-shell", "r"))
             os.remove("/tmp/lvim-shell")
-            if io.open("/tmp/lvim-shell-qf", "r") ~= nil then
-                io.close(io.open("/tmp/lvim-shell-qf", "r"))
-                os.remove("/tmp/lvim-shell-qf")
-            end
+            os.remove("/tmp/lvim-shell-qf")
             vim.fn.setqflist({}, " ", qf_list)
             vim.cmd("copen")
         end
@@ -130,12 +116,8 @@ local function check_files()
                 vim.cmd(method .. " " .. vim.fn.fnameescape(line))
             end
             method = config.edit_cmd
-            io.close(io.open("/tmp/lvim-shell", "r"))
             os.remove("/tmp/lvim-shell")
-            if io.open("/tmp/lvim-shell-qf", "r") ~= nil then
-                io.close(io.open("/tmp/lvim-shell-qf", "r"))
-                os.remove("/tmp/lvim-shell-qf")
-            end
+            os.remove("/tmp/lvim-shell-qf")
         end
     end
 end
@@ -185,16 +167,6 @@ local function do_close()
     M.is_closing = false
 end
 
-local function create_close_handler()
-    return function()
-        if M.is_closing then
-            return
-        end
-        M.is_closing = true
-        do_close()
-    end
-end
-
 function M.close()
     if M.is_closing then
         return
@@ -241,7 +213,7 @@ local function setup_mappings(suffix)
             "t",
             config.mappings.qf,
             "<C-\\><C-n>:lua require('lvim-shell').set_method('qf')<CR>i" .. suffix,
-            { buffer = true, noremap = true, silent = true }
+            { buffer = M.buf, noremap = true, silent = true }
         )
     end
     if config.mappings.close ~= nil then
@@ -249,6 +221,26 @@ local function setup_mappings(suffix)
             "t",
             config.mappings.close,
             "<C-\\><C-n>:lua require('lvim-shell').close()<CR>",
+            { buffer = M.buf, noremap = true, silent = true }
+        )
+        vim.keymap.set(
+            "n",
+            config.mappings.close,
+            "<cmd>lua require('lvim-shell').close()<CR>",
+            { buffer = M.buf, noremap = true, silent = true }
+        )
+    end
+    if config.mappings.esc ~= nil then
+        vim.keymap.set(
+            "t",
+            config.mappings.esc,
+            "<C-\\><C-n>:lua require('lvim-shell').close()<CR>",
+            { buffer = M.buf, noremap = true, silent = true }
+        )
+        vim.keymap.set(
+            "n",
+            config.mappings.esc,
+            "<cmd>lua require('lvim-shell').close()<CR>",
             { buffer = M.buf, noremap = true, silent = true }
         )
     end
@@ -348,7 +340,6 @@ M.float = function(cmd, suffix, user_config)
     end
 
     M.win = vim.api.nvim_open_win(M.buf, true, opts)
-    M.close_handler = create_close_handler()
     post_creation(suffix)
 
     M.resize_autocmd_id = vim.api.nvim_create_autocmd("VimResized", {
@@ -356,7 +347,8 @@ M.float = function(cmd, suffix, user_config)
         callback = resize_float_window,
     })
 
-    M.term_job_id = vim.fn.termopen(cmd, {
+    M.term_job_id = vim.fn.jobstart(cmd, {
+        term = true,
         on_exit = function(job_id, _)
             if M.term_job_id == job_id then
                 vim.schedule(function()
@@ -366,6 +358,10 @@ M.float = function(cmd, suffix, user_config)
         end,
         env = config.env,
     })
+
+    for _, func in ipairs(config.on_open) do
+        func()
+    end
 
     vim.cmd("startinsert")
 
@@ -392,10 +388,10 @@ M.split = function(cmd, suffix, user_config)
     vim.cmd(config.ui.split)
     M.buf = vim.api.nvim_get_current_buf()
 
-    M.close_handler = create_close_handler()
     post_creation(suffix)
 
-    M.term_job_id = vim.fn.termopen(cmd, {
+    M.term_job_id = vim.fn.jobstart(cmd, {
+        term = true,
         on_exit = function(job_id, _)
             if M.term_job_id == job_id then
                 vim.schedule(function()
@@ -405,6 +401,10 @@ M.split = function(cmd, suffix, user_config)
         end,
         env = config.env,
     })
+
+    for _, func in ipairs(config.on_open) do
+        func()
+    end
 
     vim.cmd("startinsert")
 end

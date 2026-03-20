@@ -5,7 +5,7 @@ local group = vim.api.nvim_create_augroup("LvimShell", {
 })
 
 vim.api.nvim_create_autocmd("FileType", {
-    pattern = { "LvimShell" },
+    pattern = { "lvim_shell" },
     command = "setlocal signcolumn=no nonumber norelativenumber",
     group = group,
 })
@@ -58,6 +58,10 @@ local function set_config(user_config)
     config = vim.tbl_deep_extend("force", base_config, user_config)
 end
 
+local function file_exists(path)
+    return vim.uv.fs_stat(path) ~= nil
+end
+
 function M.set_method(opt)
     method = opt
 end
@@ -68,14 +72,14 @@ local function check_files()
         local title = "LVIM SHELL"
         if f then
             local line = f:read()
-            if line ~= "" then
+            if line and line ~= "" then
                 title = line
             end
             f:close()
             os.remove("/tmp/lvim-shell-query")
         end
         local qf_pattern = "([^:]+):([^:]+):([^:]+):(.+)"
-        if io.open("/tmp/lvim-shell-qf", "r") ~= nil then
+        if file_exists("/tmp/lvim-shell-qf") then
             local qf_list = { title = title, items = {} }
             for line in io.lines("/tmp/lvim-shell-qf") do
                 local filename, line_number, column, text = string.match(line, qf_pattern)
@@ -93,7 +97,7 @@ local function check_files()
             os.remove("/tmp/lvim-shell")
             vim.fn.setqflist({}, " ", qf_list)
             vim.cmd("copen")
-        elseif io.open("/tmp/lvim-shell", "r") ~= nil then
+        elseif file_exists("/tmp/lvim-shell") then
             local qf_list = { title = title, items = {} }
             for line in io.lines("/tmp/lvim-shell") do
                 table.insert(qf_list.items, {
@@ -111,7 +115,7 @@ local function check_files()
             vim.cmd("copen")
         end
     else
-        if io.open("/tmp/lvim-shell", "r") ~= nil then
+        if file_exists("/tmp/lvim-shell") then
             for line in io.lines("/tmp/lvim-shell") do
                 vim.cmd(method .. " " .. vim.fn.fnameescape(line))
             end
@@ -248,38 +252,39 @@ end
 
 local function post_creation(suffix)
     vim.api.nvim_set_option_value("filetype", "lvim_shell", { buf = M.buf })
+    vim.api.nvim_set_option_value("bufhidden", "hide", { buf = M.buf })
+    vim.api.nvim_set_option_value("buflisted", false, { buf = M.buf })
     setup_mappings(suffix)
-
-    if vim.api.nvim_buf_is_valid(M.buf) then
-        vim.api.nvim_set_option_value("bufhidden", "hide", { buf = M.buf })
-        vim.api.nvim_set_option_value("buflisted", false, { buf = M.buf })
-    end
 end
 
 local function resize_float_window()
-    if M.win and vim.api.nvim_win_is_valid(M.win) then
-        vim.defer_fn(function()
-            local lines = vim.api.nvim_get_option_value("lines", {})
-            local columns = vim.api.nvim_get_option_value("columns", {})
-            local win_height = math.floor(lines * config.ui.float.height)
-            local win_width = math.floor(columns * config.ui.float.width)
-            local has_border = config.ui.float.border and #config.ui.float.border > 0
-            local border_size = has_border and 2 or 0
-            local total_height = win_height + border_size
-            local total_width = win_width + border_size
-            local col = math.floor((columns - total_width) * (config.ui.float.x or 0.5))
-            local row = math.floor((lines - total_height) * (config.ui.float.y or 0.5))
-            vim.api.nvim_win_set_config(M.win, {
-                width = win_width,
-                height = win_height,
-                row = row,
-                col = col,
-            })
-        end, config.ui.float.resize_delay)
-    end
+    vim.defer_fn(function()
+        if not (M.win and vim.api.nvim_win_is_valid(M.win)) then
+            return
+        end
+        local lines = vim.api.nvim_get_option_value("lines", {})
+        local columns = vim.api.nvim_get_option_value("columns", {})
+        local win_height = math.floor(lines * config.ui.float.height)
+        local win_width = math.floor(columns * config.ui.float.width)
+        local has_border = config.ui.float.border and #config.ui.float.border > 0
+        local border_size = has_border and 2 or 0
+        local total_height = win_height + border_size
+        local total_width = win_width + border_size
+        local col = math.floor((columns - total_width) * (config.ui.float.x or 0.5))
+        local row = math.floor((lines - total_height) * (config.ui.float.y or 0.5))
+        vim.api.nvim_win_set_config(M.win, {
+            width = win_width,
+            height = win_height,
+            row = row,
+            col = col,
+        })
+    end, config.ui.float.resize_delay)
 end
 
 M.float = function(cmd, suffix, user_config)
+    if M.buf and vim.api.nvim_buf_is_valid(M.buf) then
+        return
+    end
     if user_config ~= nil then
         set_config(user_config)
     else
@@ -359,6 +364,11 @@ M.float = function(cmd, suffix, user_config)
         env = config.env,
     })
 
+    if M.term_job_id <= 0 then
+        M.close()
+        return
+    end
+
     for _, func in ipairs(config.on_open) do
         func()
     end
@@ -379,6 +389,9 @@ M.float = function(cmd, suffix, user_config)
 end
 
 M.split = function(cmd, suffix, user_config)
+    if M.buf and vim.api.nvim_buf_is_valid(M.buf) then
+        return
+    end
     if user_config ~= nil then
         set_config(user_config)
     else
@@ -401,6 +414,11 @@ M.split = function(cmd, suffix, user_config)
         end,
         env = config.env,
     })
+
+    if M.term_job_id <= 0 then
+        M.close()
+        return
+    end
 
     for _, func in ipairs(config.on_open) do
         func()

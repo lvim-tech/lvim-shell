@@ -44,7 +44,7 @@ local base_config = {
             backdrop_hl = "NormalFloat",
             backdrop_blend = 40,
             zindex = 50,
-        resize_delay = 100,
+            resize_delay = 100,
         },
         split = "belowright new",
     },

@@ -37,8 +37,8 @@ local base_config = {
         vsplit = "<C-v>",
         tabedit = "<C-t>",
         edit = "<C-e>",
-        close = "<q>",
-        esc = "<Esc>",
+        close = "<C-Space>",
+        esc = nil,
         qf = "<C-q>",
     },
     env = nil,
@@ -234,13 +234,9 @@ local function setup_mappings(suffix)
             { buffer = M.buf, noremap = true, silent = true }
         )
     end
+    -- Always pass ESC through to the terminal process (overrides any global t-mode ESC mapping)
+    vim.keymap.set("t", "<Esc>", "<Esc>", { buffer = M.buf, noremap = true, silent = true })
     if config.mappings.esc ~= nil then
-        vim.keymap.set(
-            "t",
-            config.mappings.esc,
-            "<C-\\><C-n>:lua require('lvim-shell').close()<CR>",
-            { buffer = M.buf, noremap = true, silent = true }
-        )
         vim.keymap.set(
             "n",
             config.mappings.esc,

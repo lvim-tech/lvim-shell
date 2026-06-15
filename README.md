@@ -1,8 +1,11 @@
 # LVIM SHELL - Neovim plugin to run shell apps in buffer
 
+Run shell / terminal applications — a file manager, fuzzy finder or any TUI — inside a
+Neovim floating window, and act on what they return (e.g. open the selected file).
+
 ![lvim-logo](https://user-images.githubusercontent.com/82431193/115121988-3bc06800-9fbe-11eb-8dab-19f624aa7b93.png)
 
-[![License](https://img.shields.io/badge/License-BSD%203--Clause-blue.svg)](https://github.com/lvim-tech/lvim-colorscheme/blob/main/LICENSE)
+[![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD--3--Clause-blue.svg)](https://github.com/lvim-tech/lvim-shell/blob/main/LICENSE)
 
 ## Installation
 

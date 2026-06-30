@@ -69,14 +69,11 @@ end
 --- (the same normalizer the chassis uses).
 ---@return string|string[]
 local function frame_border()
-    local ok, uconf = pcall(require, "lvim-utils.config")
-    if ok and uconf.ui and uconf.ui.border then
-        local ok_util, util = pcall(require, "lvim-utils.ui.util")
-        if ok_util then
-            return util.resolve_border(uconf.ui.border)
-        end
+    local ok, util = pcall(require, "lvim-utils.ui.util")
+    if ok and util.frame_border then
+        return util.frame_border() -- the ONE shared resolver of `config.ui.border`
     end
-    return "rounded"
+    return "rounded" -- standalone fallback (lvim-utils absent)
 end
 
 local function file_exists(path)

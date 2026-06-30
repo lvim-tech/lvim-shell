@@ -13,7 +13,10 @@ vim.api.nvim_create_autocmd("FileType", {
 local base_config = {
     ui = {
         float = {
-            border = { " ", " ", " ", " ", " ", " ", " ", " " },
+            -- The terminal float STAYS off the lvim-utils chassis (it hosts a live terminal job), but its
+            -- ring still follows the SINGLE border source — left nil so it resolves to `frame_border()`
+            -- (lvim-utils.config.ui.border) at open time; a user-set value here overrides.
+            border = nil,
             float_hl = "NormalFloat",
             border_hl = "FloatBorder",
             blend = 0,
@@ -56,6 +59,24 @@ local M = {
 
 local function set_config(user_config)
     config = vim.tbl_deep_extend("force", base_config, user_config)
+end
+
+--- The shared frame border — `lvim-utils.config.ui.border`, the ONE source every lvim-tech panel follows, so
+--- this terminal float re-borders in lockstep with the rest of the UI from that single key. A user-set
+--- `config.ui.float.border` still overrides; when lvim-utils is absent and nothing is set, fall back to a
+--- plain rounded ring. The config value is the chassis' PADDED representation (empty corners between " "
+--- edges), which `nvim_open_win` rejects directly — so it is run through `lvim-utils.ui.util.resolve_border`
+--- (the same normalizer the chassis uses).
+---@return string|string[]
+local function frame_border()
+    local ok, uconf = pcall(require, "lvim-utils.config")
+    if ok and uconf.ui and uconf.ui.border then
+        local ok_util, util = pcall(require, "lvim-utils.ui.util")
+        if ok_util then
+            return util.resolve_border(uconf.ui.border)
+        end
+    end
+    return "rounded"
 end
 
 local function file_exists(path)
@@ -262,7 +283,8 @@ local function resize_float_window()
         local columns = vim.api.nvim_get_option_value("columns", {})
         local win_height = math.floor(lines * config.ui.float.height)
         local win_width = math.floor(columns * config.ui.float.width)
-        local has_border = config.ui.float.border and #config.ui.float.border > 0
+        local border = config.ui.float.border or frame_border()
+        local has_border = border ~= "none" and (type(border) ~= "table" or #border > 0)
         local border_size = has_border and 2 or 0
         local total_height = win_height + border_size
         local total_width = win_width + border_size
@@ -295,7 +317,9 @@ M.float = function(cmd, suffix, user_config)
     local win_height = math.floor(lines * config.ui.float.height)
     local win_width = math.floor(columns * config.ui.float.width)
 
-    local has_border = config.ui.float.border and #config.ui.float.border > 0
+    -- The ring comes from the single border source (`frame_border()`) unless the user pinned one in config.
+    local border = config.ui.float.border or frame_border()
+    local has_border = border ~= "none" and (type(border) ~= "table" or #border > 0)
     local border_size = has_border and 2 or 0
 
     local total_height = win_height + border_size
@@ -307,7 +331,7 @@ M.float = function(cmd, suffix, user_config)
     local opts = {
         style = "minimal",
         relative = "editor",
-        border = config.ui.float.border,
+        border = border,
         width = win_width,
         height = win_height,
         row = row,

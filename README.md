@@ -35,7 +35,9 @@ use({
 local base_config = {
     ui = {
         float = {
-            border = { " ", " ", " ", " ", " ", " ", " ", " " },
+            -- nil → follows the single border source, `lvim-utils.config.ui.border`
+            -- (set a value here to override); falls back to "rounded" when lvim-utils is absent
+            border = nil,
             float_hl = "NormalFloat",
             border_hl = "FloatBorder",
             blend = 0,

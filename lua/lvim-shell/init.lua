@@ -108,6 +108,15 @@ local base_config = {
     on_open = {},
     -- The navigable footer action bar (open methods + close). false = no footer.
     footer = true,
+    -- The footer button LIST — GROUPS of action ids (a `●` divides the groups). Ids resolve to their key + name
+    -- from the shell's action registry (edit / split / vsplit / tabedit / qf / close, from `mappings`); a
+    -- disabled mapping drops its button. Edit to reorder / regroup — purely DISPLAY (the keys stay bound).
+    footer_bar = {
+        { "edit", "split", "vsplit", "tabedit", "qf" },
+        { "close" },
+    },
+    -- The glyph dividing footer button groups (colour: `LvimUiFooterSep`).
+    footer_separator = "●",
     mappings = {
         split = "<C-x>",
         vsplit = "<C-v>",
@@ -369,13 +378,15 @@ local function bind_term_keys(buf, suffix, st)
     tmap("<Esc>", "<Esc>")
 end
 
---- The footer action bar items: the active open methods + close. A method fires by returning to the terminal
---- (set METHOD, focus it, re-enter insert, replay `suffix` so the program acts on its cursor row); close closes.
+--- The footer action bar (a frame `footer` spec): the open methods + close, GROUPED with a `●` divider, built via
+--- the shared `surface.footer` from `config.footer_bar` (groups of action ids) + this shell's action REGISTRY. A
+--- method fires by returning to the terminal (set METHOD, focus it, re-enter insert, replay `suffix` so the
+--- program acts on its cursor row); close closes. `run` keeps every button mouse-clickable.
 ---@param suffix string
----@return table[]
-local function footer_items(suffix)
+---@return table  a `{ bars = { { items, align } } }` footer spec
+local function footer_bar(suffix)
     local m = config.mappings
-    local items = {}
+    local surface = require("lvim-utils.ui.surface")
     local function to_term(send)
         if M.term_win and vim.api.nvim_win_is_valid(M.term_win) then
             vim.api.nvim_set_current_win(M.term_win)
@@ -391,20 +402,26 @@ local function footer_items(suffix)
             to_term(suffix)
         end
     end
-    local function add(key, name, run)
-        if key then
-            items[#items + 1] = { key = key, name = name, run = run }
-        end
+    local function label(k)
+        return type(k) == "string" and (k:gsub("[<>]", "")) or ""
     end
-    add(m.edit, "edit", method_run("edit"))
-    add(m.split, "split", method_run("split | edit"))
-    add(m.vsplit, "vsplit", method_run("vsplit | edit"))
-    add(m.tabedit, "tab", method_run("tabedit"))
-    add(m.qf, "qf", method_run("qf"))
-    add(m.close, "close", function()
-        M.close()
-    end)
-    return items
+    -- id → { key label, name, run }. A disabled mapping (false) yields an empty key → dropped by surface.footer.
+    local reg = {
+        edit = { key = label(m.edit), name = "edit", run = method_run("edit") },
+        split = { key = label(m.split), name = "split", run = method_run("split | edit") },
+        vsplit = { key = label(m.vsplit), name = "vsplit", run = method_run("vsplit | edit") },
+        tabedit = { key = label(m.tabedit), name = "tab", run = method_run("tabedit") },
+        qf = { key = label(m.qf), name = "qf", run = method_run("qf") },
+        close = {
+            key = label(m.close),
+            name = "close",
+            run = function()
+                M.close()
+            end,
+        },
+    }
+    local groups = config.footer_bar or { { "edit", "split", "vsplit", "tabedit", "qf" }, { "close" } }
+    return { bars = { surface.bar(groups, reg, { align = "center", separator = config.footer_separator or "●" }) } }
 end
 
 --- The shared surface geometry for `layout` from lvim-utils (`config.ui.size` via `ui.size`) — the SINGLE
@@ -584,7 +601,7 @@ local function open_shell(cmd, suffix, user_config, layout)
         cfg.position = (layout == "area") and "cmdline" or "bottom"
     end
     if config.footer ~= false then
-        cfg.footer = { bars = { { align = "center", items = footer_items(suffix) } } }
+        cfg.footer = footer_bar(suffix)
     end
 
     M.state = frame.open(cfg)

@@ -551,9 +551,15 @@ local function open_shell(cmd, suffix, user_config, layout)
     ---@type table
     local cfg = {
         mode = "float",
-        border = config.ui.float.border or frame.FRAME_BORDER,
+        -- A terminal is full-bleed, so its title rides the TOP BORDER (a blue-tinted border-title on a top " "
+        -- padding row), NOT the default content-ROW title — a `title_line = "row"` would spend a title band PLUS
+        -- an air band (two dark rows) above the terminal. With `header_air = false` the terminal fills directly
+        -- under that one title row.
+        border = config.ui.float.border or { "", " ", "", "", "", "", "", "" },
         title = frame_title(),
         title_pos = config.ui.float.title_pos or "center",
+        title_line = "border",
+        header_air = false,
         -- The terminal fills the frame directly: no inner content ring (the frame's own border is enough) — it
         -- would otherwise add a redundant blank row above + below the terminal.
         content = { blocks = { { id = "term", provider = terminal_provider(cmd, suffix, layout), border = "none" } } },

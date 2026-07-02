@@ -1,0 +1,167 @@
+*lvim-shell.txt*        Run shell / TUI apps in a Neovim terminal and act on their output
+
+==============================================================================
+CONTENTS                                                       *lvim-shell*
+
+  1. Introduction ........................... |lvim-shell-intro|
+  2. Requirements ........................... |lvim-shell-requirements|
+  3. Usage .................................. |lvim-shell-usage|
+  4. Returning results ...................... |lvim-shell-results|
+  5. Configuration .......................... |lvim-shell-config|
+  6. Theming ................................ |lvim-shell-theming|
+  7. Addons ................................. |lvim-shell-addons|
+  8. Health ................................. |lvim-shell-health|
+
+==============================================================================
+1. INTRODUCTION                                          *lvim-shell-intro*
+
+lvim-shell runs an external command — a shell, file manager (yazi), fuzzy
+finder, lazygit, … — inside a Neovim terminal, as a centered float or a bottom
+dock, and opens whatever paths the command
+returns. There is NO setup(): call |lvim-shell.float()| / |lvim-shell.split()|
+with an optional per-call config table.
+
+==============================================================================
+2. REQUIREMENTS                                   *lvim-shell-requirements*
+
+  - Neovim >= 0.10 (uses `vim.uv`, `jobstart({ term = true })`).
+  - lvim-utils (OPTIONAL) — the float border follows the shared border source
+    and the colours self-theme from the palette. Without it, lvim-shell falls
+    back to a rounded border and the builtin float highlight groups.
+
+==============================================================================
+3. USAGE                                                 *lvim-shell-usage*
+
+                                                        *lvim-shell.float()*
+require("lvim-shell").float({cmd}, {suffix}, {config})
+        Open {cmd} in a centered floating terminal.
+
+                                                        *lvim-shell.split()*
+require("lvim-shell").split({cmd}, {suffix}, {config})
+        Open {cmd} in a bottom-docked terminal (`config.ui.dock`).
+
+        {cmd}     string|string[] — the command to run.
+        {suffix}  string — the key replayed after a method key (usually
+                  "<CR>"), so the command acts on the row under the cursor.
+        {config}  table|nil — per-call config merged over the defaults
+                  (|lvim-shell-config|). nil = defaults.
+
+                                                        *lvim-shell.close()*
+require("lvim-shell").close()
+        Close the shell (idempotent).
+
+Example: >lua
+    local shell = require("lvim-shell")
+    shell.float('yazi --chooser-file="$LVIM_SHELL_FILE" .', "<CR>")
+<
+While the terminal is focused, the mappings (|lvim-shell-config|) set how the
+selected paths open: edit / split / vsplit / tabedit, or route to the quickfix
+list, and close.
+
+==============================================================================
+4. RETURNING RESULTS                                   *lvim-shell-results*
+
+A launched command returns paths in either of two ways:
+
+FILES (default) ~
+lvim-shell allocates fresh PER-SESSION temp files (|vim.fn.tempname()| — private
+to this Neovim, auto-removed on exit, and deleted again after each read; never a
+lingering, shared /tmp path) and exports their paths to the job:
+
+    $LVIM_SHELL_FILE    write chosen paths, one per line
+    $LVIM_SHELL_QF      write grep-style "file:line:col:text" (quickfix)
+    $LVIM_SHELL_QUERY   write an optional quickfix title
+
+On the terminal's exit lvim-shell reads them and opens each path with the
+pending method (or fills the quickfix list). Pin the paths with `config.files`.
+
+RPC (file-free) ~
+Neovim also exports $NVIM (its RPC socket) to the job, so an RPC-capable command
+can act on the parent Neovim directly with no files, e.g. >
+    nvim --server "$NVIM" --remote-expr "v:lua.require'lvim-shell'.close()"
+<
+==============================================================================
+5. CONFIGURATION                                        *lvim-shell-config*
+
+Defaults (pass overrides as the third argument to float/split): >lua
+    {
+        ui = {
+            float = {
+                title = "LvimShell",        -- frame title (false/nil hides it)
+                title_pos = "center",       -- "left" | "center" | "right"
+                border = nil,               -- nil → the shared lvim-utils border
+                height = 0.9, width = 0.9,  -- fractions of the editor
+                float_hl = "LvimShellNormal", -- terminal window Normal (palette)
+                blend = 0,                  -- winblend for the terminal window
+            },
+            dock = { size = 15 },        -- rows for the "area"/"bottom" dock
+        },
+        edit_cmd = "edit",
+        on_close = {},                       -- fun()[] run after close
+        on_open = {},                        -- fun()[] run after open
+        footer = true,                       -- the navigable footer action bar
+        mappings = {
+            split = "<C-x>", vsplit = "<C-v>", tabedit = "<C-t>",
+            edit = "<C-e>", close = "<C-Space>", force_close = "<C-x><C-x>",
+            footer = "<C-j>", nav_up = "<C-k>", qf = "<C-q>",
+        },
+        files = nil,                         -- nil → per-session tempfiles
+        env = nil,                           -- extra terminal env
+    }
+<
+==============================================================================
+6. THEMING                                              *lvim-shell-theming*
+
+The terminal window uses `LvimShellNormal`, self-themed from the lvim-utils
+palette and re-applied on every colorscheme change (transparent-aware; falls back
+to NormalFloat without lvim-utils). Point `float_hl` at any group to override. The
+border, title and footer come from the lvim-utils FRAME chassis and follow its
+shared groups, so the shell matches every other lvim-tech panel automatically.
+
+==============================================================================
+7. ADDONS                                                *lvim-shell-addons*
+
+`require("lvim-shell.addons")` ships ready-made launchers for ~55 popular
+terminal programs (file managers, fuzzy finders, git / database / container /
+cloud TUIs, system + disk + network monitors, HTTP clients, mail / feed / chat,
+music). File-returning tools (yazi, ranger, nnn, lf, vifm, xplr, broot, fzf,
+skim, television) are wired to `$LVIM_SHELL_FILE`, so the pick opens in Neovim;
+pure TUIs (lazygit, k9s, htop, …) get only the close mapping.
+
+Register the primary command from your config: >lua
+    require("lvim-shell.addons").command()   -- :LvimShell <name> [dir]
+<
+                                                                 *:LvimShell*
+:LvimShell {name} [float|area|bottom] [dir]
+        Launch the addon {name} (completed over the addons found on PATH). The
+        optional LAYOUT overrides where it opens — `float` (default, centred),
+        `area` (the msgarea/cmdline dock) or `bottom` (a bottom dock); area and
+        bottom keep the editor + statusline above, sized from `config.ui.dock`. The optional {dir} is the working directory (cwd
+        default). Both extra args are order-independent. E.g.
+        `:LvimShell yazi`, `:LvimShell lazygit bottom`, `:LvimShell yazi ~/p`.
+
+Optional per-addon shortcuts (`:LvimYazi`, `:LvimLazygit`, `:LvimHtop`, …), one
+for each installed addon: >lua
+    require("lvim-shell.addons").commands()
+<
+Override ONLY specific addons (deep-merged into the registry; the rest keep their
+defaults) before registering — e.g. real colours for neomutt, or open in a split: >lua
+    require("lvim-shell.addons").setup({
+        neomutt = { config = { env = { TERM = "kitty-direct" } } },
+        lazygit = { mode = "split" },
+    })
+<
+Each override is a partial spec (cmd / mode / suffix / config / bin / desc /
+returns_files); `config` is a per-call lvim-shell config (env, ui.float, mappings).
+
+From Lua: `require("lvim-shell.addons").run("lazygit", "~/p")`. Inspect the set
+with `.registry` / `.available()`.
+
+==============================================================================
+8. HEALTH                                                *lvim-shell-health*
+
+|:checkhealth| lvim-shell checks the Neovim version and whether lvim-utils is
+present for the shared border + palette theming.
+
+==============================================================================
+vim:tw=78:ts=8:et:ft=help:norl:

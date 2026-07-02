@@ -72,20 +72,15 @@ apply_hl()
 ---@field qf string     path the command writes grep-style file:line:col:text to; exported as $LVIM_SHELL_QF
 ---@field query string  path the command writes an optional quickfix title to; exported as $LVIM_SHELL_QUERY
 
----@class LvimShellDock
----@field size? integer rows for the "area" / "bottom" dock; nil = the frame default
-
 ---@class LvimShellFloatConfig
 ---@field title? string|false  frame title (e.g. "LvimShell Yazi"); false/nil hides it
 ---@field title_pos? string    title alignment: "left" | "center" (default) | "right"
 ---@field border? any          frame border (default: the shared lvim-utils border)
----@field height number        fraction of the editor height (0–1)
----@field width number         fraction of the editor width (0–1)
 ---@field float_hl string      highlight for the terminal window Normal (default LvimShellNormal)
 ---@field blend integer        winblend for the terminal window (0–100)
 
 ---@class LvimShellConfig
----@field ui { float: LvimShellFloatConfig, dock: LvimShellDock }
+---@field ui { float: LvimShellFloatConfig }
 ---@field edit_cmd string        default open command (also the value METHOD resets to)
 ---@field on_close fun()[]       callbacks run after the shell closes
 ---@field on_open fun()[]        callbacks run after the shell opens
@@ -99,17 +94,14 @@ local base_config = {
     ui = {
         float = {
             -- Frame title on the top border (blue-tinted); false/nil hides it. `border` nil → the shared
-            -- lvim-utils border. `height`/`width` are fractions of the editor.
+            -- lvim-utils border. The SIZE (float width/height, area/bottom height) is NOT here — it comes from
+            -- the shared `lvim-utils config.ui.size` (edited via :LvimUtils / lvim-control-center).
             title = "LvimShell",
             title_pos = "center",
             border = nil,
-            height = 0.9,
-            width = 0.9,
             float_hl = "LvimShellNormal",
             blend = 0,
         },
-        -- Dock height (rows) for the "area" / "bottom" layouts; nil = the frame default.
-        dock = { size = 15 },
     },
     edit_cmd = "edit",
     on_close = {},
@@ -426,18 +418,50 @@ end
 --- `start_fzf`) creates the PTY at the final size and lets nvim auto-resize it with the window.
 ---@param cmd string|string[]
 ---@param suffix string
----@param layout string  "float" | "area" | "bottom" — a DOCK reserves the dock size (rows), not the float fraction.
+--- The shared surface geometry for `layout` from lvim-utils (`config.ui.size` via `ui.size`) — the SINGLE
+--- source, edited live by `:LvimUtils` / lvim-control-center. lvim-shell is frame-hosted, so lvim-utils is
+--- present; the guard keeps it safe if the module is somehow missing.
+---
+--- A terminal has NO measurable content (it FILLS whatever window it is given), so an "auto" (fit-to-content)
+--- dimension would collapse the frame to the empty terminal at geometry time. For the shell we therefore turn
+--- "auto" into a FIXED fill to its cap (`auto_max`): the terminal fills up to that fraction, never shrinks to
+--- nothing. A numeric fraction passes through unchanged.
+---@param layout string  "float" | "area" | "bottom"
+---@return table size  a surface `size` table ({ height, width? })
+local function shared_size(layout)
+    local ok, lui = pcall(require, "lvim-utils.ui")
+    local sz = (ok and type(lui.size) == "function" and lui.size(layout))
+        or (layout == "float" and { width = { fixed = 0.9 }, height = { fixed = 0.9 } })
+        or { height = { fixed = 0.6 } }
+    local function fill(dim)
+        if dim and dim.auto then
+            return { fixed = dim.max or 0.85 }
+        end
+        return dim
+    end
+    return { height = fill(sz.height), width = fill(sz.width) }
+end
+
+--- Absolute rows/cols for a resolved size dimension ({ fixed } | { auto, max } | nil), a fraction of `total`.
+---@param dim table|nil
+---@param total integer
+---@param default number  fraction used when the dim is absent
+---@return integer
+local function dim_px(dim, total, default)
+    local v = dim and (dim.fixed or (dim.auto and dim.max)) or default
+    return v < 1 and math.max(1, math.floor(total * v)) or math.floor(v)
+end
+
+---@param layout string  "float" | "area" | "bottom"
 ---@return table provider
 local function terminal_provider(cmd, suffix, layout)
     local bound
     local started = false
     return {
         size = function()
-            local lines = vim.o.lines
-            local cols = vim.o.columns
-            local h = (layout == "float") and math.floor(lines * (config.ui.float.height or 0.9))
-                or ((config.ui.dock or {}).size or 15)
-            return math.floor(cols * (config.ui.float.width or 0.9)), h
+            local sz = shared_size(layout)
+            local w = (layout == "float") and dim_px(sz.width, vim.o.columns, 0.9) or math.floor(vim.o.columns * 0.9)
+            return w, dim_px(sz.height, vim.o.lines, layout == "float" and 0.9 or 0.6)
         end,
         on_focus = function()
             if M.term_win and vim.api.nvim_win_is_valid(M.term_win) then
@@ -522,7 +546,6 @@ local function open_shell(cmd, suffix, user_config, layout)
 
     local frame = require("lvim-utils.ui.surface")
     local is_float = layout == "float"
-    local dock_size = (config.ui.dock or {}).size
 
     ---@type table
     local cfg = {
@@ -543,20 +566,15 @@ local function open_shell(cmd, suffix, user_config, layout)
             end
         end,
     }
-    if is_float then
-        cfg.size = {
-            width = { fixed = config.ui.float.width or 0.9 },
-            height = { fixed = config.ui.float.height or 0.9 },
-        }
-    else
+    -- Geometry from the SHARED lvim-utils config (`config.ui.size` via `ui.size`), edited live by :LvimUtils /
+    -- lvim-control-center. float → { width, height }; area/bottom → { height } (full-width docks).
+    cfg.size = shared_size(layout)
+    if not is_float then
         -- "area" docks in the msgarea / cmdline zone: the surface ENGINE auto-hosts a hostless
-        -- `position = "cmdline"` frame there (owns the height, forces the zindex above the zone), so the editor
-        -- and its statusline stay visible ABOVE the shell — exactly like LvimPicker. "bottom" is a plain bottom
-        -- float dock. No host / zindex passed here — the engine wires them (see lvim-utils ui.surface auto-host).
+        -- `position = "cmdline"` frame there (owns the height via the shared area cap + forces the zindex above
+        -- the zone), so the editor and its statusline stay visible ABOVE the shell — exactly like LvimPicker.
+        -- "bottom" is a plain bottom float dock. No host / zindex passed here — the engine wires them.
         cfg.position = (layout == "area") and "cmdline" or "bottom"
-        if dock_size then
-            cfg.size = { height = { fixed = dock_size } }
-        end
     end
     if config.footer ~= false then
         cfg.footer = { bars = { { align = "center", items = footer_items(suffix) } } }

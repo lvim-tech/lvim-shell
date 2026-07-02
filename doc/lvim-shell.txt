@@ -16,18 +16,24 @@ CONTENTS                                                       *lvim-shell*
 1. INTRODUCTION                                          *lvim-shell-intro*
 
 lvim-shell runs an external command — a shell, file manager (yazi), fuzzy
-finder, lazygit, … — inside a Neovim terminal, as a centered float or a bottom
-dock, and opens whatever paths the command
-returns. There is NO setup(): call |lvim-shell.float()| / |lvim-shell.split()|
-with an optional per-call config table.
+finder, lazygit, … — inside a Neovim terminal, hosted in a lvim-utils FRAME
+(the shared chassis: border, title, navigable footer, sector navigation,
+theme). It opens as a centered float or a dock — "area" (the cmdline/msgarea
+zone, editor + statusline above) or "bottom" (a bottom float dock) — and opens
+whatever paths the command returns. The geometry (float width/height, dock
+height) is NOT a lvim-shell key: it comes from the shared lvim-utils
+`config.ui.size`, edited live via `:LvimUtils`. There is NO setup(): call
+|lvim-shell.float()| / |lvim-shell.split()| with an optional per-call config
+table.
 
 ==============================================================================
 2. REQUIREMENTS                                   *lvim-shell-requirements*
 
   - Neovim >= 0.10 (uses `vim.uv`, `jobstart({ term = true })`).
-  - lvim-utils (OPTIONAL) — the float border follows the shared border source
-    and the colours self-theme from the palette. Without it, lvim-shell falls
-    back to a rounded border and the builtin float highlight groups.
+  - lvim-utils — hosts the terminal in the shared FRAME chassis (border, title,
+    footer, sector navigation), sources the geometry from `config.ui.size`, and
+    self-themes the colours from the palette. The theming/merge helpers degrade
+    gracefully if absent, but the frame itself is required to open the shell.
 
 ==============================================================================
 3. USAGE                                                 *lvim-shell-usage*
@@ -38,7 +44,8 @@ require("lvim-shell").float({cmd}, {suffix}, {config})
 
                                                         *lvim-shell.split()*
 require("lvim-shell").split({cmd}, {suffix}, {config})
-        Open {cmd} in a bottom-docked terminal (`config.ui.dock`).
+        Open {cmd} in a docked terminal ("area" default, or "bottom"). The dock
+        height comes from the shared lvim-utils `config.ui.size`.
 
         {cmd}     string|string[] — the command to run.
         {suffix}  string — the key replayed after a method key (usually
@@ -83,18 +90,18 @@ can act on the parent Neovim directly with no files, e.g. >
 ==============================================================================
 5. CONFIGURATION                                        *lvim-shell-config*
 
-Defaults (pass overrides as the third argument to float/split): >lua
+Defaults (pass overrides as the third argument to float/split). NOTE the
+geometry (float width/height, dock height) is NOT here — it comes from the
+shared lvim-utils `config.ui.size`, edited live via `:LvimUtils`: >lua
     {
         ui = {
             float = {
                 title = "LvimShell",        -- frame title (false/nil hides it)
                 title_pos = "center",       -- "left" | "center" | "right"
                 border = nil,               -- nil → the shared lvim-utils border
-                height = 0.9, width = 0.9,  -- fractions of the editor
                 float_hl = "LvimShellNormal", -- terminal window Normal (palette)
                 blend = 0,                  -- winblend for the terminal window
             },
-            dock = { size = 15 },        -- rows for the "area"/"bottom" dock
         },
         edit_cmd = "edit",
         on_close = {},                       -- fun()[] run after close
@@ -136,8 +143,10 @@ Register the primary command from your config: >lua
         Launch the addon {name} (completed over the addons found on PATH). The
         optional LAYOUT overrides where it opens — `float` (default, centred),
         `area` (the msgarea/cmdline dock) or `bottom` (a bottom dock); area and
-        bottom keep the editor + statusline above, sized from `config.ui.dock`. The optional {dir} is the working directory (cwd
-        default). Both extra args are order-independent. E.g.
+        bottom keep the editor + statusline above. The dock height comes from
+        the shared lvim-utils `config.ui.size`. The optional {dir} is the
+        working directory (cwd default). Both extra args are order-independent.
+        E.g.
         `:LvimShell yazi`, `:LvimShell lazygit bottom`, `:LvimShell yazi ~/p`.
 
 Optional per-addon shortcuts (`:LvimYazi`, `:LvimLazygit`, `:LvimHtop`, …), one

@@ -11,40 +11,65 @@ selected file). Ships **~55 ready-made launchers** for popular tools, exposed th
 
 ## Installation
 
-Install the plugin with your preferred package manager:
+Requires Neovim >= 0.10 and [lvim-utils](https://github.com/lvim-tech/lvim-utils).
 
-### [lazy.nvim](https://github.com/folke/lazy.nvim)
+lvim-shell has **no `setup()`** — it is a small per-call API (`require("lvim-shell").float` /
+`.split`) plus the bundled addons registry. The one line you run at startup is
+`require("lvim-shell.addons").command()`, which registers the `:LvimShell <name>` command over the
+bundled launchers (see below).
 
-```lua
-require("lazy").setup({
-    {
-        "lvim-tech/lvim-shell",
-        config = function()
-            -- register the :LvimShell command over the bundled addons (see below)
-            require("lvim-shell.addons").command()
-        end,
-    },
-})
+### lvim-installer (recommended)
+
+Install and manage it from the LVIM package manager — open the **Plugins** tab and install / update / pin it:
+
+```vim
+:LvimInstaller plugins
 ```
 
-### [packer](https://github.com/wbthomason/packer.nvim)
+lvim-installer installs plugins through Neovim's built-in `vim.pack`, so no external plugin manager is needed.
+
+### lazy.nvim
+
+```lua
+return {
+    "lvim-tech/lvim-shell",
+    dependencies = { "lvim-tech/lvim-utils" },
+    config = function()
+        -- register the :LvimShell command over the bundled addons (see below)
+        require("lvim-shell.addons").command()
+    end,
+}
+```
+
+### packer.nvim
 
 ```lua
 use({
     "lvim-tech/lvim-shell",
+    requires = { "lvim-tech/lvim-utils" },
     config = function()
         require("lvim-shell.addons").command()
     end,
 })
 ```
 
-There is no `setup()` — the plugin is a small API plus the addons registry.
+### Native (vim.pack)
+
+```lua
+vim.pack.add({
+    { src = "https://github.com/lvim-tech/lvim-utils" },
+    { src = "https://github.com/lvim-tech/lvim-shell" },
+})
+require("lvim-shell.addons").command()
+```
 
 ## How it works
 
-lvim-shell launches a command as a Neovim terminal job in a centered float (with an optional dimmed
-or a bottom dock, themed to your colorscheme, and closes the float when the program exits. The
-program communicates its result back to Neovim in one of two ways:
+lvim-shell launches a command as a Neovim terminal job, hosted in a lvim-utils **frame** (the shared
+chassis — border, title, navigable footer, sector navigation, theme). It opens as a centered float or
+as a dock — `area` (the cmdline/msgarea zone, editor + statusline above) or `bottom` (a bottom float
+dock) — themed to your colorscheme, and closes when the program exits. The program communicates its
+result back to Neovim in one of two ways:
 
 - **Result files (default).** lvim-shell allocates fresh per-session temp files and exports their
   paths to the job as `$LVIM_SHELL_FILE`, `$LVIM_SHELL_QF` and `$LVIM_SHELL_QUERY`. A file manager /
@@ -71,8 +96,11 @@ Register the command, then launch any bundled tool by name:
 
 `:LvimShell <name> [float|area|bottom] [dir]` — `<name>` completes over the addons on `$PATH`;
 the optional **layout** overrides where it opens (`float` default, `area` — the msgarea/cmdline dock, or
-`bottom` — a bottom dock; both keep the editor and statusline visible above, sized from `config.ui.dock`); the optional
-**dir** is the working directory (default: cwd). Both extra args are order-independent. Inside the float:
+`bottom` — a bottom dock; both keep the editor and statusline visible above); the optional
+**dir** is the working directory (default: cwd). Both extra args are order-independent. The geometry
+(float width/height, dock height) is **not** a lvim-shell key — it comes from the shared
+[lvim-utils](https://github.com/lvim-tech/lvim-utils) `config.ui.size`, edited live via `:LvimUtils`
+(the control-center **Utils** tab). Inside the float:
 
 | Key          | Action                                                        |
 | ------------ | ------------------------------------------------------------- |
@@ -280,7 +308,9 @@ require("lvim-shell.addons").registry.mytool = {
 
 ## Default configuration
 
-Pass overrides as the third argument to `float`/`split` (or via an addon's `config` field):
+Pass overrides as the third argument to `float`/`split` (or via an addon's `config` field). Note the
+**geometry** (float width/height, dock height) is not here — it comes from the shared lvim-utils
+`config.ui.size`, edited live via `:LvimUtils` (control-center **Utils** tab):
 
 ```lua
 local base_config = {
@@ -289,13 +319,9 @@ local base_config = {
             title = "LvimShell", -- frame title on the top border (false/nil hides it)
             title_pos = "center", -- "left" | "center" | "right"
             border = nil, -- nil → the shared lvim-utils border; or any nvim border spec
-            height = 0.9, -- fraction of the editor height
-            width = 0.9, -- fraction of the editor width
             float_hl = "LvimShellNormal", -- the terminal window's Normal (palette-themed)
             blend = 0, -- winblend for the terminal window
         },
-        -- dock height; `size` = rows for the "bottom" dock (nil = frame default)
-        dock = { size = 15 },
     },
     edit_cmd = "edit",
     on_close = {},

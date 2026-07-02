@@ -135,6 +135,7 @@ local base_config = {
 ---@field term_buf integer|nil the terminal buffer hosted in the frame's content panel
 ---@field term_win integer|nil the content-panel window currently showing the terminal
 ---@field job integer|nil     the running terminal job id
+---@field _down boolean       teardown re-entry guard (true while `teardown` is running)
 local M = {
     state = nil,
     term_buf = nil,
@@ -406,18 +407,6 @@ local function footer_items(suffix)
     return items
 end
 
---- The terminal-hosting content provider. `update` OWNS the panel window (no `render`, so the chassis never
---- overwrites the live terminal): it swaps `M.term_buf` in, LAZILY starts the terminal job inside that window
---- the first time (so the PTY is sized to the final dock geometry — see below), re-asserts the window
---- highlight, and (re)binds the terminal keys on the displayed buffer, since the chassis bound its nav keys on
---- its own scratch buffer.
----
---- Why start the job here and not after `frame.open`: a bottom dock resizes the panel after open (the frame
---- reflow) AFTER the panel window is created; a terminal started against the pre-reflow size kept that smaller
---- size and left empty rows below it. Starting it INSIDE the panel window (as the picker's fzf provider does in
---- `start_fzf`) creates the PTY at the final size and lets nvim auto-resize it with the window.
----@param cmd string|string[]
----@param suffix string
 --- The shared surface geometry for `layout` from lvim-utils (`config.ui.size` via `ui.size`) — the SINGLE
 --- source, edited live by `:LvimUtils` / lvim-control-center. lvim-shell is frame-hosted, so lvim-utils is
 --- present; the guard keeps it safe if the module is somehow missing.
@@ -452,6 +441,18 @@ local function dim_px(dim, total, default)
     return v < 1 and math.max(1, math.floor(total * v)) or math.floor(v)
 end
 
+--- The terminal-hosting content provider. `update` OWNS the panel window (no `render`, so the chassis never
+--- overwrites the live terminal): it swaps `M.term_buf` in, LAZILY starts the terminal job inside that window
+--- the first time (so the PTY is sized to the final dock geometry — see below), re-asserts the window
+--- highlight, and (re)binds the terminal keys on the displayed buffer, since the chassis bound its nav keys on
+--- its own scratch buffer.
+---
+--- Why start the job here and not after `frame.open`: a bottom dock resizes the panel after open (the frame
+--- reflow) AFTER the panel window is created; a terminal started against the pre-reflow size kept that smaller
+--- size and left empty rows below it. Starting it INSIDE the panel window (as the picker's fzf provider does in
+--- `start_fzf`) creates the PTY at the final size and lets nvim auto-resize it with the window.
+---@param cmd string|string[]
+---@param suffix string
 ---@param layout string  "float" | "area" | "bottom"
 ---@return table provider
 local function terminal_provider(cmd, suffix, layout)
@@ -607,7 +608,7 @@ end
 
 --- Open `cmd` in a bottom-docked terminal (frame-hosted) and act on the paths it emits.
 --- "area" (default — the cmdline/msgarea dock, editor + statusline above, like LvimPicker) or "bottom"
---- (a bottom float dock). Sized by `config.ui.dock.size`.
+--- (a bottom float dock). Sized from the shared `lvim-utils config.ui.size` (edited via :LvimUtils).
 ---@param cmd string|string[] the command to run
 ---@param suffix string the key replayed after a method key (usually "<CR>")
 ---@param user_config? table per-call config merged over the defaults (nil = defaults)

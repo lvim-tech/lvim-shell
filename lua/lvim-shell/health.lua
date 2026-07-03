@@ -23,6 +23,24 @@ function M.check()
     else
         health.info("lvim-utils not found — rounded border + builtin float highlights (standalone)")
     end
+
+    -- setup() is optional (persistent defaults); confirm the entry point resolves.
+    local ok_shell, shell = pcall(require, "lvim-shell")
+    if ok_shell and type(shell.setup) == "function" then
+        health.ok("lvim-shell.setup() available (optional persistent defaults)")
+    else
+        health.warn("lvim-shell.setup() missing — cannot set persistent defaults")
+    end
+
+    -- Grep → quickfix addons need fzf plus a grepper; report which toolchain is present (optional feature).
+    local has_fzf = vim.fn.executable("fzf") == 1
+    if has_fzf and vim.fn.executable("rg") == 1 then
+        health.ok("grep→quickfix: fzf + rg on PATH (:LvimShell live_grep)")
+    elseif has_fzf and vim.fn.executable("grep") == 1 then
+        health.ok("grep→quickfix: fzf + grep on PATH (:LvimShell grep_qf)")
+    else
+        health.info("grep→quickfix addons need fzf + rg (or fzf + grep) on PATH")
+    end
 end
 
 return M

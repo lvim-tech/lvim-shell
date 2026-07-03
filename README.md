@@ -13,10 +13,11 @@ selected file). Ships **~55 ready-made launchers** for popular tools, exposed th
 
 Requires Neovim >= 0.10 and [lvim-utils](https://github.com/lvim-tech/lvim-utils).
 
-lvim-shell has **no `setup()`** — it is a small per-call API (`require("lvim-shell").float` /
-`.split`) plus the bundled addons registry. The one line you run at startup is
-`require("lvim-shell.addons").command()`, which registers the `:LvimShell <name>` command over the
-bundled launchers (see below).
+lvim-shell is a small per-call API (`require("lvim-shell").float` / `.split`) plus the bundled addons
+registry. The one line you run at startup is `require("lvim-shell.addons").command()`, which registers
+the `:LvimShell <name>` command over the bundled launchers (see below). `setup()` is **optional** — call
+`require("lvim-shell").setup({ … })` if you want to fold persistent config defaults into the module (see
+[Default configuration](#default-configuration)); a per-call config still overrides them.
 
 ### lvim-installer (recommended)
 
@@ -159,6 +160,41 @@ Neovim; the rest just run in the float.
 | `fzf_preview` | Fuzzy finder + preview    |
 | `skim`        | Fuzzy finder (Rust, `sk`) |
 | `television`  | Fuzzy finder (`tv`)       |
+
+### Grep → quickfix ↩ returns files
+
+Interactive live grep whose (multi-)selected matches land in the **quickfix list**. They write
+`file:line:col:text` rows to `$LVIM_SHELL_QF` and default their open method to `qf`, so on exit lvim-shell
+fills the quickfix list (no in-terminal `<C-q>` needed; `<Tab>` multi-selects in fzf, and you can still
+switch a pick to edit/split/… per row). Each needs its whole toolchain on `$PATH` — offered in completion
+only when present.
+
+| name        | program                        | needs         |
+| ----------- | ------------------------------ | ------------- |
+| `live_grep` | Live grep (rg + fzf) → quickfix | `fzf` + `rg`   |
+| `grep_qf`   | Live grep (grep + fzf) → quickfix | `fzf` + `grep` |
+
+```vim
+:LvimShell live_grep            " float; type to search, <Tab> to multi-select, <CR> → quickfix
+:LvimShell live_grep bottom ~/p " a bottom dock, searching ~/p
+```
+
+These are POSIX-shell pipelines (rg/grep/sed). To roll your own, register an addon whose `cmd` writes
+`file:line:col:text` to `$LVIM_SHELL_QF` and whose `config.edit_cmd` is `"qf"`:
+
+```lua
+require("lvim-shell.addons").registry.my_grep = {
+    bin = "fzf",
+    needs = { "rg" }, -- every extra binary that must also be on PATH
+    desc = "My live grep → quickfix",
+    returns_files = true,
+    config = { edit_cmd = "qf" }, -- default the open method to the quickfix list
+    cmd = ": | fzf --disabled --multi --delimiter :"
+        .. " --bind 'start:reload:rg --column --line-number --no-heading --smart-case -- {q} || true'"
+        .. " --bind 'change:reload:rg --column --line-number --no-heading --smart-case -- {q} || true'"
+        .. ' > "$LVIM_SHELL_QF"',
+}
+```
 
 ### Git
 
@@ -308,8 +344,19 @@ require("lvim-shell.addons").registry.mytool = {
 
 ## Default configuration
 
-Pass overrides as the third argument to `float`/`split` (or via an addon's `config` field). Note the
-**geometry** (float width/height, dock height) is not here — it comes from the shared lvim-utils
+Pass overrides as the third argument to `float`/`split` (or via an addon's `config` field), or make them
+**persistent** with the optional `setup()` — it deep-merges into the module's default config in place (via
+the shared `lvim-utils.utils.merge`, clean array-replace), so every later `float`/`split` picks them up
+while a per-call config still wins:
+
+```lua
+require("lvim-shell").setup({
+    ui = { float = { title_pos = "left", blend = 10 } },
+    mappings = { close = "<C-c>" }, -- rebind the close key everywhere
+})
+```
+
+Note the **geometry** (float width/height, dock height) is not here — it comes from the shared lvim-utils
 `config.ui.size`, edited live via `:LvimUtils` (control-center **Utils** tab):
 
 ```lua
@@ -360,6 +407,13 @@ A launched command returns paths in either of two ways:
 
 - **RPC (file-free)** — Neovim exports `$NVIM` (its RPC socket) to the job, so an RPC-capable command can act
   on the parent directly, e.g. `nvim --server "$NVIM" --remote-expr "v:lua.require'lvim-shell'.close()"`.
+
+**Windows.** The result-file paths are platform-agnostic (`vim.fn.tempname()`), and on Windows their
+backslashes are normalised to forward slashes so they splice cleanly into the shell command (`cmd`/`pwsh`
+accept them, as do `rg`/`fzf`). The `$LVIM_SHELL_QF` reader also tolerates a leading drive letter, so a
+`C:\path\file.lua:12:3:text` (or `C:/…`) row is parsed as one filename, not split on the `C:`. POSIX
+`path:line:col:text` rows parse exactly as before. (The bundled grep→quickfix pipelines above are
+POSIX-shell; on Windows supply your own equivalent `cmd`.)
 
 ## Theming
 

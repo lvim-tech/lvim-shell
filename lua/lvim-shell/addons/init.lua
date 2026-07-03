@@ -1,9 +1,10 @@
 -- lvim-shell.addons: ready-made launchers for popular terminal programs used in a Neovim workflow — file
 -- managers, fuzzy finders, git / database / container / cloud TUIs, system + disk + network monitors, HTTP/API
--- clients, mail / feed / chat and music players. Each entry is a small spec; `M.run` wires it through lvim-shell
--- (a float or split), running it inside the target directory and pointing FILE-RETURNING tools at
--- $LVIM_SHELL_FILE so the chosen path opens straight back in Neovim. Pure TUIs (a git client, a monitor, …) get
--- ONLY the close mapping, so lvim-shell never steals the program's own Ctrl-chords.
+-- clients, mail / feed / chat and music players, plus interactive GREP→QUICKFIX finders. Each entry is a small
+-- spec; `M.run` wires it through lvim-shell (a float or split), running it inside the target directory and
+-- pointing FILE-RETURNING tools at $LVIM_SHELL_FILE so the chosen path opens straight back in Neovim (grep→qf
+-- tools write $LVIM_SHELL_QF instead and default their open method to "qf"). Pure TUIs (a git client, a monitor,
+-- …) get ONLY the close mapping, so lvim-shell never steals the program's own Ctrl-chords.
 --
 -- Usage:
 --   require("lvim-shell.addons").setup({ … })           -- override ONLY specific addons (cmd/env/mode/…)
@@ -58,6 +59,8 @@ end
 
 ---@class LvimShellAddon
 ---@field bin string             executable checked on PATH (the availability gate)
+---@field needs? string[]        EXTRA executables that must ALSO be on PATH (e.g. a grep→qf addon needs its
+---                              finder AND its grepper); all of them gate availability alongside `bin`
 ---@field cmd string             the invocation, run after `cd <dir>` (file-returners write $LVIM_SHELL_FILE)
 ---@field desc string            one-line description (used in completion)
 ---@field returns_files? boolean writes $LVIM_SHELL_FILE → the pick opens in Neovim (default false = pure TUI)
@@ -66,6 +69,23 @@ end
 ---@field config? table          extra per-call lvim-shell config
 
 local M = {}
+
+--- Whether EVERY binary an addon needs is on PATH — its `bin` plus each entry of `needs` (a grep→quickfix
+--- addon needs both the interactive finder and the grepper). The single availability predicate shared by
+--- `available()` and `run()`.
+---@param a LvimShellAddon
+---@return boolean
+local function addon_available(a)
+    if vim.fn.executable(a.bin) ~= 1 then
+        return false
+    end
+    for _, extra in ipairs(a.needs or {}) do
+        if vim.fn.executable(extra) ~= 1 then
+            return false
+        end
+    end
+    return true
+end
 
 -- The registry. `cmd` is the bare invocation — `M.run` prepends `cd <dir> &&`, so file managers open the dir and
 -- finders search it. File-returning tools redirect / flag their result into "$LVIM_SHELL_FILE".
@@ -116,6 +136,46 @@ M.registry = {
         desc = "Fuzzy finder (television)",
         returns_files = true,
         cmd = 'tv > "$LVIM_SHELL_FILE"',
+    },
+
+    -- ── Grep → quickfix (interactive matches into the quickfix list) ─────────────
+    -- These write grep-style `file:line:col:text` rows to $LVIM_SHELL_QF, so on exit lvim-shell fills the
+    -- quickfix list (`config.edit_cmd = "qf"` makes "qf" the DEFAULT method, so no in-terminal <C-q> is needed;
+    -- the user can still switch to edit/split/… per pick). fzf runs the finder interactively via its own
+    -- `reload` bind and multi-select (Tab). POSIX-only (rg/grep/sed pipeline) — `needs` gates them so they are
+    -- offered ONLY when the whole toolchain is on PATH.
+    live_grep = {
+        bin = "fzf",
+        needs = { "rg" },
+        desc = "Live grep (rg + fzf) → quickfix",
+        returns_files = true,
+        config = { edit_cmd = "qf" },
+        -- rg --column --line-number --no-heading emits exactly `file:line:col:text`; fzf's start/change reload
+        -- re-runs it on the live query {q}; the (multi-)selection is written verbatim to the QF file.
+        cmd = table.concat({
+            ": | fzf --disabled --multi --delimiter :",
+            "--prompt 'rg> '",
+            "--bind 'start:reload:rg --column --line-number --no-heading --smart-case -- {q} || true'",
+            "--bind 'change:reload:rg --column --line-number --no-heading --smart-case -- {q} || true'",
+            '> "$LVIM_SHELL_QF"',
+        }, " "),
+    },
+    grep_qf = {
+        bin = "fzf",
+        needs = { "grep" },
+        desc = "Live grep (grep + fzf) → quickfix",
+        returns_files = true,
+        config = { edit_cmd = "qf" },
+        -- grep -rInH emits `file:line:text` (no column); the sed inserts a `:1:` column so each row becomes the
+        -- `file:line:col:text` the quickfix reader expects.
+        cmd = table.concat({
+            ": | fzf --disabled --multi --delimiter :",
+            "--prompt 'grep> '",
+            "--bind 'start:reload:grep -rInH -- {q} . 2>/dev/null || true'",
+            "--bind 'change:reload:grep -rInH -- {q} . 2>/dev/null || true'",
+            "| sed -E 's/^([^:]+):([0-9]+):/\\1:\\2:1:/'",
+            '> "$LVIM_SHELL_QF"',
+        }, " "),
     },
 
     -- ── Git ─────────────────────────────────────────────────────────────────────
@@ -210,7 +270,7 @@ end
 function M.available()
     local names = {}
     for name, a in pairs(M.registry) do
-        if vim.fn.executable(a.bin) == 1 then
+        if addon_available(a) then
             names[#names + 1] = name
         end
     end
@@ -232,8 +292,19 @@ function M.run(name, dir, position)
         vim.notify("lvim-shell: unknown addon '" .. tostring(name) .. "'", vim.log.levels.WARN)
         return
     end
-    if vim.fn.executable(a.bin) ~= 1 then
-        vim.notify(("lvim-shell: '%s' not found on PATH (needs `%s`)"):format(name, a.bin), vim.log.levels.WARN)
+    if not addon_available(a) then
+        -- List every required binary that is missing (the `bin` plus any `needs`), so a grep→qf addon reports
+        -- the whole toolchain rather than just its finder.
+        local missing = {}
+        for _, b in ipairs(vim.list_extend({ a.bin }, a.needs or {})) do
+            if vim.fn.executable(b) ~= 1 then
+                missing[#missing + 1] = b
+            end
+        end
+        vim.notify(
+            ("lvim-shell: '%s' not available (needs on PATH: %s)"):format(name, table.concat(missing, ", ")),
+            vim.log.levels.WARN
+        )
         return
     end
 

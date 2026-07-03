@@ -22,9 +22,10 @@ theme). It opens as a centered float or a dock — "area" (the cmdline/msgarea
 zone, editor + statusline above) or "bottom" (a bottom float dock) — and opens
 whatever paths the command returns. The geometry (float width/height, dock
 height) is NOT a lvim-shell key: it comes from the shared lvim-utils
-`config.ui.size`, edited live via `:LvimUtils`. There is NO setup(): call
-|lvim-shell.float()| / |lvim-shell.split()| with an optional per-call config
-table.
+`config.ui.size`, edited live via `:LvimUtils`. Call |lvim-shell.float()| /
+|lvim-shell.split()| with an optional per-call config table; an OPTIONAL
+|lvim-shell.setup()| folds persistent defaults into the module (a per-call
+config still overrides them).
 
 ==============================================================================
 2. REQUIREMENTS                                   *lvim-shell-requirements*
@@ -53,6 +54,18 @@ require("lvim-shell").split({cmd}, {suffix}, {config})
         {config}  table|nil — per-call config merged over the defaults
                   (|lvim-shell-config|). nil = defaults.
 
+                                                        *lvim-shell.setup()*
+require("lvim-shell").setup({opts})
+        OPTIONAL. Deep-merge {opts} into the module's DEFAULT config IN PLACE
+        (via the shared lvim-utils.utils.merge, clean array-replace), so they
+        become the persistent defaults for every later float/split. Additive
+        and backward-compatible — the plugin works without ever calling it, and
+        a per-call {config} still overrides these defaults. >lua
+            require("lvim-shell").setup({
+                ui = { float = { title_pos = "left" } },
+                mappings = { close = "<C-c>" },
+            })
+<
                                                         *lvim-shell.close()*
 require("lvim-shell").close()
         Close the shell (idempotent).
@@ -87,12 +100,21 @@ Neovim also exports $NVIM (its RPC socket) to the job, so an RPC-capable command
 can act on the parent Neovim directly with no files, e.g. >
     nvim --server "$NVIM" --remote-expr "v:lua.require'lvim-shell'.close()"
 <
+WINDOWS ~
+The result-file paths are platform-agnostic (|vim.fn.tempname()|); on Windows
+their backslashes are normalised to forward slashes so they splice cleanly into
+the shell command (cmd/pwsh, rg/fzf accept them). The $LVIM_SHELL_QF reader also
+tolerates a leading drive letter, so `C:\path\file.lua:12:3:text` (or `C:/…`)
+parses as ONE filename, not split on the `C:`; POSIX `path:line:col:text` rows
+parse exactly as before. The bundled grep→quickfix addons are POSIX-shell
+pipelines — on Windows supply your own equivalent `cmd`.
 ==============================================================================
 5. CONFIGURATION                                        *lvim-shell-config*
 
-Defaults (pass overrides as the third argument to float/split). NOTE the
-geometry (float width/height, dock height) is NOT here — it comes from the
-shared lvim-utils `config.ui.size`, edited live via `:LvimUtils`: >lua
+Defaults (pass overrides as the third argument to float/split, or persist them
+with |lvim-shell.setup()|). NOTE the geometry (float width/height, dock height)
+is NOT here — it comes from the shared lvim-utils `config.ui.size`, edited live
+via `:LvimUtils`: >lua
     {
         ui = {
             float = {
@@ -131,9 +153,19 @@ shared groups, so the shell matches every other lvim-tech panel automatically.
 `require("lvim-shell.addons")` ships ready-made launchers for ~55 popular
 terminal programs (file managers, fuzzy finders, git / database / container /
 cloud TUIs, system + disk + network monitors, HTTP clients, mail / feed / chat,
-music). File-returning tools (yazi, ranger, nnn, lf, vifm, xplr, broot, fzf,
-skim, television) are wired to `$LVIM_SHELL_FILE`, so the pick opens in Neovim;
-pure TUIs (lazygit, k9s, htop, …) get only the close mapping.
+music), plus interactive GREP→QUICKFIX finders. File-returning tools (yazi,
+ranger, nnn, lf, vifm, xplr, broot, fzf, skim, television) are wired to
+`$LVIM_SHELL_FILE`, so the pick opens in Neovim; pure TUIs (lazygit, k9s, htop,
+…) get only the close mapping.
+
+GREP → QUICKFIX ~
+`live_grep` (rg + fzf) and `grep_qf` (grep + fzf) run an interactive live grep
+and write the multi-selected matches as `file:line:col:text` to $LVIM_SHELL_QF;
+their `config.edit_cmd = "qf"` makes "qf" the DEFAULT method, so on exit the
+matches fill the quickfix list (no in-terminal <C-q> needed). They need their
+whole toolchain on PATH — an addon's optional `needs` field (a string[] of extra
+binaries) gates availability alongside `bin`, so they appear in completion only
+when present. POSIX-shell only.
 
 Register the primary command from your config: >lua
     require("lvim-shell.addons").command()   -- :LvimShell <name> [dir]

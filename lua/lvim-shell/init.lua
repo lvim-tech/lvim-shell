@@ -9,7 +9,8 @@
 -- from the footer bar. The result files default to fresh PER-SESSION temp files (vim.fn.tempname() — private,
 -- auto-removed, deleted after each read; never a lingering, shared /tmp path), exported to the job as
 -- $LVIM_SHELL_FILE / $LVIM_SHELL_QF / $LVIM_SHELL_QUERY. Neovim also exports $NVIM (its RPC socket) for
--- RPC-capable commands. There is no setup(): pass an optional per-call config table to M.float / M.split.
+-- RPC-capable commands. setup() is OPTIONAL — it folds persistent defaults into the module's default config;
+-- either way a per-call config table passed to M.float / M.split still overrides them.
 --
 ---@module "lvim-shell"
 
@@ -170,14 +171,46 @@ local function set_config(user_config)
     end
 end
 
+--- OPTIONAL persistent setup: deep-merge `opts` into the module's DEFAULT config (`base_config`) IN PLACE, so
+--- they become the effective defaults for every subsequent M.float / M.split. Additive and backward-compatible
+--- — the plugin works without ever calling it, and a per-call `user_config` still overrides these defaults
+--- (`set_config` deepcopies the updated `base_config`, then merges the per-call table over it). Uses the shared
+--- lvim-utils.utils.merge (clean array-replace) when present, else a guarded `vim.tbl_deep_extend`.
+---@param opts LvimShellConfig|table|nil overrides folded into the default config
+---@return nil
+function M.setup(opts)
+    if opts == nil then
+        return
+    end
+    local ok, uu = pcall(require, "lvim-utils.utils")
+    if ok and type(uu.merge) == "function" then
+        uu.merge(base_config, opts)
+    else
+        base_config = vim.tbl_deep_extend("force", base_config, opts)
+    end
+end
+
+--- On Windows, `vim.fn.tempname()` returns a backslash path (e.g. `C:\Users\…\nvimXXXX\0`). Forward slashes are
+--- accepted by Neovim's own file APIs AND by the shells/programs we hand the path to (cmd / pwsh / rg / fzf),
+--- and they avoid backslash-escaping when the path is spliced into a shell command — so normalise to forward
+--- slashes on Windows. POSIX paths are returned unchanged.
+---@param path string
+---@return string
+local function slashed(path)
+    if vim.fn.has("win32") == 1 then
+        return (path:gsub("\\", "/"))
+    end
+    return path
+end
+
 --- Ensure `config.files` is populated with fresh per-session temp files when the user did not pin explicit ones.
 ---@return nil
 local function ensure_files()
     if not config.files then
         config.files = {
-            list = vim.fn.tempname(),
-            qf = vim.fn.tempname(),
-            query = vim.fn.tempname(),
+            list = slashed(vim.fn.tempname()),
+            qf = slashed(vim.fn.tempname()),
+            query = slashed(vim.fn.tempname()),
         }
     end
 end
@@ -193,6 +226,33 @@ end
 ---@param opt string a Vim command ("edit"/"tabedit"/"split | edit"/…) or "qf"
 function M.set_method(opt)
     method = opt
+end
+
+--- The grep-style quickfix row pattern: `file:line:col:text`.
+---@type string
+local QF_PATTERN = "([^:]+):([^:]+):([^:]+):(.+)"
+
+--- Parse one `$LVIM_SHELL_QF` row into its (filename, lnum, col, text) parts. POSIX `path:line:col:text` is
+--- matched by QF_PATTERN directly. On Windows a filename can start with a drive letter (`C:\path\file.lua` or
+--- `C:/path/file.lua`), whose `X:` would otherwise be mis-split as the first `:`-field — so there we peel a
+--- leading `^%a:[\\/]` drive prefix off, match the remainder, and re-prepend the drive to the filename. When a
+--- row does not match, all four are nil (same as the previous inline `string.match`), so callers keep their
+--- existing nil-guards and the POSIX result is byte-for-byte identical.
+---@param line string
+---@return string? filename, string? lnum, string? col, string? text
+local function parse_qf_line(line)
+    local drive = ""
+    if vim.fn.has("win32") == 1 then
+        local d, rest = line:match("^(%a:[\\/])(.*)$")
+        if d then
+            drive, line = d, rest
+        end
+    end
+    local filename, lnum, col, text = string.match(line, QF_PATTERN)
+    if filename ~= nil then
+        filename = drive .. filename
+    end
+    return filename, lnum, col, text
 end
 
 --- Read the results the command emitted and act on them (quickfix for METHOD "qf", else open each with METHOD),
@@ -214,11 +274,10 @@ local function check_files()
             f:close()
             os.remove(files.query)
         end
-        local qf_pattern = "([^:]+):([^:]+):([^:]+):(.+)"
         if file_exists(files.qf) then
             local qf_list = { title = title, items = {} }
             for line in io.lines(files.qf) do
-                local filename, line_number, column, text = string.match(line, qf_pattern)
+                local filename, line_number, column, text = parse_qf_line(line)
                 table.insert(qf_list.items, {
                     filename = filename ~= nil and filename or "",
                     lnum = tonumber(line_number) or 1,

@@ -17,7 +17,7 @@ function M.check()
     end
 
     local ok_hl = pcall(require, "lvim-utils.highlight")
-    local ok_util = pcall(require, "lvim-utils.ui.util")
+    local ok_util = pcall(require, "lvim-ui.util")
     if ok_hl and ok_util then
         health.ok("lvim-utils found — shared float border + palette self-theming")
     else

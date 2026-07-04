@@ -445,7 +445,7 @@ end
 ---@return table  a `{ bars = { { items, align } } }` footer spec
 local function footer_bar(suffix)
     local m = config.mappings
-    local surface = require("lvim-utils.ui.surface")
+    local surface = require("lvim-ui.surface")
     local function to_term(send)
         if M.term_win and vim.api.nvim_win_is_valid(M.term_win) then
             vim.api.nvim_set_current_win(M.term_win)
@@ -494,7 +494,7 @@ end
 ---@param layout string  "float" | "area" | "bottom"
 ---@return table size  a surface `size` table ({ height, width? })
 local function shared_size(layout)
-    local ok, lui = pcall(require, "lvim-utils.ui")
+    local ok, lui = pcall(require, "lvim-ui")
     local sz = (ok and type(lui.size) == "function" and lui.size(layout))
         or (layout == "float" and { width = { fixed = 0.9 }, height = { fixed = 0.9 } })
         or { height = { fixed = 0.6 } }
@@ -621,7 +621,7 @@ local function open_shell(cmd, suffix, user_config, layout)
     M.term_buf = vim.api.nvim_create_buf(false, true)
     vim.bo[M.term_buf].bufhidden = "hide"
 
-    local frame = require("lvim-utils.ui.surface")
+    local frame = require("lvim-ui.surface")
     local is_float = layout == "float"
 
     ---@type table

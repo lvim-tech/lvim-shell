@@ -178,15 +178,37 @@ end
 --- lvim-utils.utils.merge (clean array-replace) when present, else a guarded `vim.tbl_deep_extend`.
 ---@param opts LvimShellConfig|table|nil overrides folded into the default config
 ---@return nil
+--- Configure lvim-shell and register its command surface. `opts` is the base config (float / mappings / …)
+--- PLUS two addon keys owned by setup (so a consumer only calls setup and gets `:LvimShell`):
+---   • `addons`          — per-addon registry overrides (e.g. `{ neomutt = { config = { env = {…} } } }`)
+---   • `addon_commands`  — when true, also register the per-addon `:Lvim<Name>` shortcut commands
+--- Always registers the canonical `:LvimShell <name> [float|area|bottom] [dir]` command (the addon launcher).
+---@param opts? table
 function M.setup(opts)
-    if opts == nil then
-        return
-    end
+    opts = opts or {}
+    -- Split the addon-owned keys out so they never leak into the shell's base config.
+    local addon_overrides = opts.addons
+    local addon_shortcuts = opts.addon_commands
+    opts.addons, opts.addon_commands = nil, nil
+
     local ok, uu = pcall(require, "lvim-utils.utils")
     if ok and type(uu.merge) == "function" then
         uu.merge(base_config, opts)
     else
         base_config = vim.tbl_deep_extend("force", base_config, opts)
+    end
+
+    -- Register the addons + the canonical `:LvimShell` command — setup owns this now, so consumers no longer
+    -- wire `addons.setup()` / `addons.command()` by hand.
+    local ok_a, addons = pcall(require, "lvim-shell.addons")
+    if ok_a then
+        if addon_overrides then
+            addons.setup(addon_overrides)
+        end
+        addons.command()
+        if addon_shortcuts then
+            addons.commands()
+        end
     end
 end
 

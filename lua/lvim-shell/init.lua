@@ -634,7 +634,7 @@ local function open_shell(cmd, suffix, user_config, layout)
         border = config.ui.float.border or { "", " ", "", "", "", "", "", "" },
         title = frame_title(),
         title_pos = config.ui.float.title_pos or "center",
-        title_line = "border",
+        title_line = "row",
         header_air = false,
         -- The terminal fills the frame directly: no inner content ring (the frame's own border is enough) — it
         -- would otherwise add a redundant blank row above + below the terminal.

@@ -26,6 +26,8 @@ local group = vim.api.nvim_create_augroup("LvimShell", {
     clear = true,
 })
 
+local IS_WIN = vim.fn.has("win32") == 1
+
 vim.api.nvim_create_autocmd("FileType", {
     pattern = { "lvim_shell" },
     command = "setlocal signcolumn=no nonumber norelativenumber",
@@ -86,9 +88,12 @@ apply_hl()
 ---@field on_close fun()[]       callbacks run after the shell closes
 ---@field on_open fun()[]        callbacks run after the shell opens
 ---@field footer boolean         show the navigable footer action bar (default true)
+---@field footer_bar? string[][] groups of footer action ids
+---@field footer_separator? string glyph dividing footer button groups
 ---@field mappings LvimShellMappings
 ---@field files? LvimShellFiles  result-file paths (nil → per-session tempfiles); also exported to the job env
 ---@field env table<string, string>|nil extra environment for the terminal job
+---@field cwd? string            directory the command runs in; relative result paths are resolved from it
 
 ---@type LvimShellConfig
 local base_config = {
@@ -138,6 +143,7 @@ local base_config = {
     ---@type LvimShellFiles|nil
     files = nil,
     env = nil,
+    cwd = nil,
 }
 
 ---@class LvimShell
@@ -176,7 +182,6 @@ end
 --- — the plugin works without ever calling it, and a per-call `user_config` still overrides these defaults
 --- (`set_config` deepcopies the updated `base_config`, then merges the per-call table over it). Uses the shared
 --- lvim-utils.utils.merge (clean array-replace) when present, else a guarded `vim.tbl_deep_extend`.
----@param opts LvimShellConfig|table|nil overrides folded into the default config
 ---@return nil
 --- Configure lvim-shell and register its command surface. `opts` is the base config (float / mappings / …)
 --- PLUS two addon keys owned by setup (so a consumer only calls setup and gets `:LvimShell`):
@@ -185,7 +190,7 @@ end
 --- Always registers the canonical `:LvimShell <name> [float|area|bottom] [dir]` command (the addon launcher).
 ---@param opts? table
 function M.setup(opts)
-    opts = opts or {}
+    opts = opts and vim.deepcopy(opts) or {}
     -- Split the addon-owned keys out so they never leak into the shell's base config.
     local addon_overrides = opts.addons
     local addon_shortcuts = opts.addon_commands
@@ -219,7 +224,7 @@ end
 ---@param path string
 ---@return string
 local function slashed(path)
-    if vim.fn.has("win32") == 1 then
+    if IS_WIN then
         return (path:gsub("\\", "/"))
     end
     return path
@@ -244,6 +249,19 @@ local function file_exists(path)
     return vim.uv.fs_stat(path) ~= nil
 end
 
+---@param path string
+---@return string
+local function resolve_result_path(path)
+    if path == "" or path:match("^%a:[\\/]") or path:sub(1, 1) == "/" or path:sub(1, 2) == "\\\\" then
+        return path
+    end
+    local cwd = config and config.cwd
+    if type(cwd) == "string" and cwd ~= "" then
+        return vim.fs.normalize(cwd .. "/" .. path)
+    end
+    return path
+end
+
 --- Set the pending open METHOD for the next batch of emitted files.
 ---@param opt string a Vim command ("edit"/"tabedit"/"split | edit"/…) or "qf"
 function M.set_method(opt)
@@ -264,7 +282,7 @@ local QF_PATTERN = "([^:]+):([^:]+):([^:]+):(.+)"
 ---@return string? filename, string? lnum, string? col, string? text
 local function parse_qf_line(line)
     local drive = ""
-    if vim.fn.has("win32") == 1 then
+    if IS_WIN then
         local d, rest = line:match("^(%a:[\\/])(.*)$")
         if d then
             drive, line = d, rest
@@ -301,7 +319,7 @@ local function check_files()
             for line in io.lines(files.qf) do
                 local filename, line_number, column, text = parse_qf_line(line)
                 table.insert(qf_list.items, {
-                    filename = filename ~= nil and filename or "",
+                    filename = filename ~= nil and resolve_result_path(filename) or "",
                     lnum = tonumber(line_number) or 1,
                     end_lnum = tonumber(line_number) or 1,
                     col = tonumber(column) or 1,
@@ -312,27 +330,36 @@ local function check_files()
             method = config.edit_cmd
             os.remove(files.qf)
             os.remove(files.list)
+            os.remove(files.query)
             vim.fn.setqflist({}, " ", qf_list)
             vim.cmd("copen")
         elseif file_exists(files.list) then
             local qf_list = { title = title, items = {} }
             for line in io.lines(files.list) do
-                table.insert(qf_list.items, { filename = line, lnum = 1, end_lnum = 1, col = 1, col_end = 1 })
+                table.insert(qf_list.items, {
+                    filename = resolve_result_path(line),
+                    lnum = 1,
+                    end_lnum = 1,
+                    col = 1,
+                    col_end = 1,
+                })
             end
             method = config.edit_cmd
             os.remove(files.list)
             os.remove(files.qf)
+            os.remove(files.query)
             vim.fn.setqflist({}, " ", qf_list)
             vim.cmd("copen")
         end
     else
         if file_exists(files.list) then
             for line in io.lines(files.list) do
-                vim.cmd(method .. " " .. vim.fn.fnameescape(line))
+                vim.cmd(method .. " " .. vim.fn.fnameescape(resolve_result_path(line)))
             end
             method = config.edit_cmd
             os.remove(files.list)
             os.remove(files.qf)
+            os.remove(files.query)
         end
     end
 end
@@ -363,7 +390,6 @@ local function teardown()
     end
     pcall(on_exit)
     M.state, M.term_buf, M.term_win, M.job = nil, nil, nil, nil
-    M._down = false
 end
 
 --- Close the shell (idempotent). Routes through the frame so the chassis tears its windows down cleanly.
@@ -406,6 +432,7 @@ local function start_terminal(win, cmd)
                 end
             end,
             env = job_env(),
+            cwd = config.cwd,
         })
     end)
     return type(M.job) == "number" and M.job > 0
@@ -633,6 +660,7 @@ local function open_shell(cmd, suffix, user_config, layout)
     end
     set_config(user_config)
     ensure_files()
+    config.cwd = slashed(vim.fn.fnamemodify(config.cwd or vim.fn.getcwd(), ":p"))
     method = config.edit_cmd
     M._down = false
 

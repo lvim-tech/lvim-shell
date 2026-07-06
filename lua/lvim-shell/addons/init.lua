@@ -308,13 +308,14 @@ function M.run(name, dir, position)
         return
     end
 
-    dir = (dir and dir ~= "") and dir or vim.fn.getcwd()
-    local cmd = ("cd %s && %s"):format(vim.fn.fnameescape(vim.fn.expand(dir)), a.cmd)
+    dir = vim.fn.fnamemodify((dir and dir ~= "") and vim.fn.expand(dir) or vim.fn.getcwd(), ":p")
+    local cmd = a.cmd
 
     ---@type table
     local cfg = vim.tbl_deep_extend("force", {
         -- the border-title shows the addon, e.g. "LvimShell Yazi"
         ui = { float = { title = "LvimShell " .. pascal(name) } },
+        cwd = dir,
     }, a.config or {})
     if not a.returns_files then
         -- A pure TUI: disable the file-open method mappings so its Ctrl-keys reach the program (close stays).

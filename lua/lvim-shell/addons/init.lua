@@ -61,7 +61,7 @@ end
 ---@field bin string             executable checked on PATH (the availability gate)
 ---@field needs? string[]        EXTRA executables that must ALSO be on PATH (e.g. a grep→qf addon needs its
 ---                              finder AND its grepper); all of them gate availability alongside `bin`
----@field cmd string             the invocation, run after `cd <dir>` (file-returners write $LVIM_SHELL_FILE)
+---@field cmd string             the bare invocation, run WITH the terminal job's cwd = dir (file-returners write $LVIM_SHELL_FILE)
 ---@field desc string            one-line description (used in completion)
 ---@field returns_files? boolean writes $LVIM_SHELL_FILE → the pick opens in Neovim (default false = pure TUI)
 ---@field mode? "float"|"split"  how to open (default "float")
@@ -87,8 +87,9 @@ local function addon_available(a)
     return true
 end
 
--- The registry. `cmd` is the bare invocation — `M.run` prepends `cd <dir> &&`, so file managers open the dir and
--- finders search it. File-returning tools redirect / flag their result into "$LVIM_SHELL_FILE".
+-- The registry. `cmd` is the bare invocation — `M.run` hands `dir` to the terminal job as its `cwd` (no shell-side
+-- `cd`), so file managers open the dir and finders search it. File-returning tools redirect / flag their result
+-- into "$LVIM_SHELL_FILE"; relative result paths are resolved back against that cwd on exit.
 ---@type table<string, LvimShellAddon>
 M.registry = {
     -- ── File managers (return the chosen path) ──────────────────────────────────

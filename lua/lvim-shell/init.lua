@@ -249,6 +249,9 @@ local function file_exists(path)
     return vim.uv.fs_stat(path) ~= nil
 end
 
+--- Absolutize a result path the command emitted. Paths are RELATIVE to `config.cwd` (the dir the command ran in),
+--- not Neovim's cwd, so join a non-absolute line onto `config.cwd`. Absolute inputs (POSIX `/…`, a Windows drive
+--- `X:\…` / `X:/…`, or a UNC `\\…`) and the empty string pass through unchanged.
 ---@param path string
 ---@return string
 local function resolve_result_path(path)

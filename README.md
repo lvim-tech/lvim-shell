@@ -29,31 +29,6 @@ Install and manage it from the LVIM package manager — open the **Plugins** tab
 
 lvim-installer installs plugins through Neovim's built-in `vim.pack`, so no external plugin manager is needed.
 
-### lazy.nvim
-
-```lua
-return {
-    "lvim-tech/lvim-shell",
-    dependencies = { "lvim-tech/lvim-utils" },
-    config = function()
-        -- register the :LvimShell command over the bundled addons (see below)
-        require("lvim-shell.addons").command()
-    end,
-}
-```
-
-### packer.nvim
-
-```lua
-use({
-    "lvim-tech/lvim-shell",
-    requires = { "lvim-tech/lvim-utils" },
-    config = function()
-        require("lvim-shell.addons").command()
-    end,
-})
-```
-
 ### Native (vim.pack)
 
 ```lua
@@ -84,6 +59,24 @@ result back to Neovim in one of two ways:
 Programs that only run (a git client, a monitor) return nothing — lvim-shell simply reloads any
 buffers they changed on disk when they close.
 
+### Docking
+
+lvim-shell is a consumer of the shared lvim-utils **dock-stack manager**, which enforces **one visible
+window per layout**. Opening lvim-shell in a layout (`float` / `area` / `bottom`) that already holds a
+picker or terminal **parks** that occupant (keeping its state) and shows the shell in its place — the two
+never overlap. The parked occupant stays on that layout's stack, so `<Leader>n` / `<Leader>p` cycle back to
+it, and closing the shell reveals it again. Without lvim-utils (the standalone fallback) the shell simply
+opens its frame directly.
+
+The dock keys every entry by **(id, layout)**, so the SAME shell opened in a *different* layout is a
+**separate live entry** — a shell can be docked in `float`, `bottom` **and** `area` **at once** (one entry
+in each stack, each with its own terminal window). Re-opening the shell in a layout it already occupies just
+**re-shows** that entry (never a duplicate in that stack, and it does not move the shell in the others).
+
+Because lvim-shell launches full-screen TUI apps (vifm, lazygit, htop) that own **every** key — `Esc`,
+`q`, `<Leader>`, all of it — its terminal gets **zero** dock keymaps: no `<Leader>` owner is installed on
+it. The app keeps all its keys and closes with its own; its exit closes lvim-shell.
+
 ## Quick start
 
 Register the command, then launch any bundled tool by name:
@@ -100,7 +93,7 @@ the optional **layout** overrides where it opens (`float` default, `area` — th
 `bottom` — a bottom dock; both keep the editor and statusline visible above); the optional
 **dir** is the working directory (default: cwd). Both extra args are order-independent. The geometry
 (float width/height, dock height) is **not** a lvim-shell key — it comes from the shared
-[lvim-utils](https://github.com/lvim-tech/lvim-utils) `config.ui.size`, edited live via `:LvimUtils`
+[lvim-utils](https://github.com/lvim-tech/lvim-utils) `config.dock.geometry`, edited live via `:LvimUtils`
 (the control-center **Utils** tab). Inside the float:
 
 | Key          | Action                                                        |
@@ -357,7 +350,7 @@ require("lvim-shell").setup({
 ```
 
 Note the **geometry** (float width/height, dock height) is not here — it comes from the shared lvim-utils
-`config.ui.size`, edited live via `:LvimUtils` (control-center **Utils** tab):
+`config.dock.geometry`, edited live via `:LvimUtils` (control-center **Utils** tab):
 
 ```lua
 local base_config = {
@@ -370,10 +363,28 @@ local base_config = {
             blend = 0, -- winblend for the terminal window
         },
     },
+    -- Dock integration, namespaced under `dock` (matching lvim-dependencies' `config.dock.*`).
+    dock = {
+        -- true = full dock-STACK consumer (managed: cyclable <Leader>n/p/x/m, :LvimDock,
+        -- one-visible-per-layout, no overlap); false = geometry-only (central dock.slot size/
+        -- backdrop, opens standalone, NOT in the stack).
+        dock_stack = true,
+        -- Per-plugin per-layout ANCHORED geometry overrides, deep-merged per field OVER the global
+        -- lvim-utils config.dock.geometry.<layout>; empty {} = inherit the global unchanged. Each
+        -- layout may carry: height, height_auto, backdrop = { enabled, mode, dim = { amount },
+        -- darken = { amount } }, auto_hide, keep_focus. FLOAT ALSO: width, width_auto. area/bottom
+        -- are ALWAYS full-width — NO width/width_auto (ignored if set).
+        force = { float = {}, area = {}, bottom = {} },
+    },
     edit_cmd = "edit",
     on_close = {},
     on_open = {},
     footer = true, -- the navigable footer action bar (false to hide it)
+    footer_bar = { -- GROUPS of footer action ids (a divider between groups); display order only
+        { "edit", "split", "vsplit", "tabedit", "qf" },
+        { "close" },
+    },
+    footer_separator = "●", -- glyph dividing the footer button groups
     mappings = {
         split = "<C-x>",
         vsplit = "<C-v>",
@@ -389,7 +400,32 @@ local base_config = {
     -- command as $LVIM_SHELL_FILE / $LVIM_SHELL_QF / $LVIM_SHELL_QUERY. Set { list, qf, query } to pin them.
     files = nil,
     env = nil,
+    cwd = nil, -- directory the command runs in (nil → cwd); relative result paths resolve from it
 }
+```
+
+### Dock integration (`dock.dock_stack` + `dock.force`)
+
+- **`dock.dock_stack`** (default `true`) — open through the managed **dock stack** (cyclable with `<Leader>n` /
+  `<Leader>p`, closable with `<Leader>x`, listed in the `<Leader>m` dock menu; one visible consumer per
+  layout, no overlap). Set it `false` to open **standalone**: the frame still gets its central geometry from
+  `dock.slot` (and any `dock.force` below), but it does **not** join the stack — no parking, no cycling.
+- **`dock.force`** — per-layout **anchored geometry overrides**, deep-merged per field over the global
+  `lvim-utils` `config.dock.geometry.<layout>` (an empty `{}` inherits the global unchanged). Each layout may
+  set `height`, `height_auto`, `backdrop`, `auto_hide`, `keep_focus`; **`float` also** takes `width` /
+  `width_auto`. `area` and `bottom` are always full-width — their `width` / `width_auto` are ignored. `dock.force`
+  applies in **both** modes (even `dock.dock_stack = false` forces its own size / backdrop).
+
+```lua
+require("lvim-shell").setup({
+    dock = {
+        dock_stack = true,
+        force = {
+            area = { height = 0.4 }, -- a taller area dock than the global default
+            float = { width = 0.6, height = 0.7 }, -- a specific float size for the shell
+        },
+    },
+})
 ```
 
 ## Returning results

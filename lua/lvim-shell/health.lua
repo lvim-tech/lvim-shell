@@ -24,6 +24,15 @@ function M.check()
         health.info("lvim-utils not found — rounded border + builtin float highlights (standalone)")
     end
 
+    -- The shared dock-stack manager enforces one-visible-per-layout (no overlap) and makes the shell cyclable.
+    -- Optional: absent → the shell opens its frame directly (standalone), still correct, just un-managed.
+    local ok_dock, dock = pcall(require, "lvim-utils.dock")
+    if ok_dock and type(dock) == "table" and type(dock.open) == "function" then
+        health.ok("lvim-utils.dock found — one-visible-per-layout (no overlap), cyclable, app-safe (no dock keymaps)")
+    else
+        health.info("lvim-utils.dock not found — the shell opens its frame directly (un-managed standalone)")
+    end
+
     -- setup() is optional (persistent defaults); confirm the entry point resolves.
     local ok_shell, shell = pcall(require, "lvim-shell")
     if ok_shell and type(shell.setup) == "function" then

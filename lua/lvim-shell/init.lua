@@ -12,15 +12,23 @@
 -- RPC-capable commands. setup() is OPTIONAL — it folds persistent defaults into the module's default config;
 -- either way a per-call config table passed to M.float / M.split still overrides them.
 --
+-- DOCK: lvim-shell is a consumer of the shared dock-stack manager (lvim-utils.dock), which keys every entry by
+-- (id, LAYOUT). The stable id "lvim-shell" is the base identity; the SAME id opened in a DIFFERENT layout is a
+-- SEPARATE entry in that other layout's stack — so ONE shell can be docked in float, bottom AND area at once
+-- (one live entry per stack), while re-opening the SAME (id, layout) RE-SHOWS the one entry (never a duplicate
+-- in that stack). That is why ALL window/session state is PER LAYOUT: `panels[layout]` (one terminal buffer /
+-- window / job / frame / dock KEY / live config per layout). `dock.open` RETURNS the entry key; the panel
+-- STORES it and passes it back to the lifecycle APIs (`dock.closed`) for THAT entry. It opens THROUGH
+-- `dock.open`, so opening in a layout that already holds a picker or terminal PARKS that occupant rather than
+-- overlapping it (the one-visible-per-layout invariant). Crucially it declares `buffers()` as EMPTY so the dock
+-- installs ZERO buffer-local <Leader> owner on the terminal: the launched TUI app (vifm, lazygit, htop) owns
+-- every key. The app closes with its OWN keys; its exit routes through `dock.closed` (by the stored key) to
+-- reveal the LIFO-next parked consumer. With `config.dock.dock_stack = false` (or an older lvim-utils lacking
+-- the manager) it opens the frame DIRECTLY — un-managed standalone, geometry still central (`dock.slot` + the
+-- per-layout `config.dock.force` override), just not in the stack. `config.dock.force.<layout>` anchors a
+-- per-layout size / backdrop override on TOP of the shared `dock.geometry`.
+--
 ---@module "lvim-shell"
-
---- The live effective config for the current invocation (defaults merged with the per-call user config).
----@type LvimShellConfig
-local config
---- The pending open method for the files the command emits — a Vim command ("edit" / "tabedit" /
---- "vsplit | edit" …) or "qf" to route the results into the quickfix list. Reset to `config.edit_cmd` per batch.
----@type string?
-local method
 
 local group = vim.api.nvim_create_augroup("LvimShell", {
     clear = true,
@@ -82,8 +90,28 @@ apply_hl()
 ---@field float_hl string      highlight for the terminal window Normal (default LvimShellNormal)
 ---@field blend integer        winblend for the terminal window (0–100)
 
+---@class LvimShellForceLayout  a per-layout ANCHORED geometry override, deep-merged per field over the global
+---                              `lvim-utils.config.dock.geometry.<layout>` (empty {} = inherit the global)
+---@field height? number          fixed rows (>1) or a screen fraction (≤1) for this layout
+---@field height_auto? boolean    true = content-fit up to `height`; false = pin `height` exactly
+---@field width? number           FLOAT ONLY — fixed cols (>1) or a fraction (≤1); ignored for area/bottom
+---@field width_auto? boolean     FLOAT ONLY — content-fit width up to `width`; ignored for area/bottom
+---@field backdrop? table|false   false = no backdrop; a table = merged over the central backdrop spec
+---@field auto_hide? boolean      close the surface when a file is opened from it (area/bottom)
+---@field keep_focus? boolean     keep focus in the dock after opening a file from it (area/bottom)
+
+---@class LvimShellForce
+---@field float LvimShellForceLayout   float overrides (width/width_auto allowed)
+---@field area LvimShellForceLayout    area overrides (ALWAYS full-width — width/width_auto ignored)
+---@field bottom LvimShellForceLayout  bottom overrides (ALWAYS full-width — width/width_auto ignored)
+
+---@class LvimShellDock
+---@field dock_stack boolean     open through the managed dock STACK (true) or standalone (false)
+---@field force LvimShellForce   per-layout anchored geometry overrides passed to `dock.slot`
+
 ---@class LvimShellConfig
 ---@field ui { float: LvimShellFloatConfig }
+---@field dock LvimShellDock     dock integration: managed stack toggle + per-layout geometry overrides
 ---@field edit_cmd string        default open command (also the value METHOD resets to)
 ---@field on_close fun()[]       callbacks run after the shell closes
 ---@field on_open fun()[]        callbacks run after the shell opens
@@ -101,13 +129,26 @@ local base_config = {
         float = {
             -- Frame title on the top border (blue-tinted); false/nil hides it. `border` nil → the shared
             -- lvim-utils border. The SIZE (float width/height, area/bottom height) is NOT here — it comes from
-            -- the shared `lvim-utils config.ui.size` (edited via :LvimUtils / lvim-control-center).
+            -- the shared `lvim-utils config.dock.geometry` (edited via :LvimUtils / lvim-control-center).
             title = "LvimShell",
             title_pos = "center",
             border = nil,
             float_hl = "LvimShellNormal",
             blend = 0,
         },
+    },
+    -- Dock integration, namespaced under `dock` (matching lvim-dependencies' `config.dock.*`).
+    dock = {
+        -- true = full dock-STACK consumer (managed: cyclable <Leader>n/p/x/m, :LvimDock,
+        -- one-visible-per-layout, no overlap); false = geometry-only (central dock.slot size/
+        -- backdrop, opens standalone, NOT in the stack).
+        dock_stack = true,
+        -- Per-plugin per-layout ANCHORED geometry overrides, deep-merged per field OVER the global
+        -- `lvim-utils.config.dock.geometry.<layout>`; empty {} = inherit the global unchanged. Each
+        -- layout may carry: height, height_auto, backdrop = { enabled, mode, dim = { amount },
+        -- darken = { amount } }, auto_hide, keep_focus. FLOAT ALSO: width, width_auto. area/bottom
+        -- are ALWAYS full-width — NO width/width_auto (ignored if set).
+        force = { float = {}, area = {}, bottom = {} },
     },
     edit_cmd = "edit",
     on_close = {},
@@ -146,49 +187,130 @@ local base_config = {
     cwd = nil,
 }
 
----@class LvimShell
----@field state table|nil     the lvim-utils frame state (has .close / .sector / …)
----@field term_buf integer|nil the terminal buffer hosted in the frame's content panel
----@field term_win integer|nil the content-panel window currently showing the terminal
----@field job integer|nil     the running terminal job id
----@field _down boolean       teardown re-entry guard (true while `teardown` is running)
-local M = {
-    state = nil,
-    term_buf = nil,
-    term_win = nil,
-    job = nil,
-    _down = false,
-}
+--- One live shell SESSION for a SINGLE layout. Because the dock keys every entry by (id, layout), the same
+--- shell can be docked in float, bottom AND area at once — three live sessions, one entry in each stack — so
+--- every piece of window/session state is PER LAYOUT, kept here (lazily created by `panel_state`). A flat
+--- module-level state would orphan the first window the moment a shell opened in a second layout.
+---@class LvimShellPanel
+---@field state table|nil        the lvim-utils frame state (has .close / .sector / …)
+---@field term_buf integer|nil   the terminal buffer hosted in the frame's content panel
+---@field term_win integer|nil   the content-panel window currently showing the terminal
+---@field job integer|nil        the running terminal job id
+---@field _down boolean          teardown re-entry guard (true while `teardown` is running)
+---@field _parking boolean       park re-entry guard — while true `teardown` is suppressed so a frame close only
+---                              drops the WINDOW (the job + terminal buffer survive for a dock re-show)
+---@field _docked boolean        this session was opened THROUGH the shared dock manager (so a self-close must
+---                              notify the dock to reveal the LIFO-next parked consumer)
+---@field key string|nil         the dock ENTRY KEY (id, layout) returned by `dock.open` — passed back to the
+---                              lifecycle APIs (`dock.closed`) for THIS entry
+---@field consumer table|nil     memoised LvimDockConsumer handle for THIS layout (`id` = base identity, layout fixed)
+---@field config LvimShellConfig|nil  the live effective config for THIS session (defaults merged with the per-call
+---                              user config); read by every provider / teardown / result handler of this session
+---@field method string|nil      the pending open method for the files THIS session emits — a Vim command
+---                              ("edit" / "tabedit" / "vsplit | edit" …) or "qf". Reset to `config.edit_cmd` per batch
+---@field pending_cmd string|string[]|nil  the launched command, replayed by the dock RE-SHOW to rebuild the frame
+---@field pending_suffix string  the key replayed after a method key (e.g. "<CR>")
+---@field pending_opener integer|nil  the window the shell was opened FROM (for the `<C-k>` nav-up hand-back)
 
---- Merge the per-call user config over the defaults into the live `config` (shared lvim-utils.utils.merge, with
---- a vim.tbl_deep_extend fallback). Never mutates `base_config` — the target is a deepcopy.
+---@type table<string, LvimShellPanel>  layout → its live shell session ("float" / "area" / "bottom")
+local panels = {}
+
+--- Lazily create + return the per-LAYOUT panel state. Every piece of window/session state (the frame, the
+--- terminal buffer / window / job, the live config, the pending launch state, the memoised consumer and the
+--- dock entry KEY) lives HERE, keyed by layout — so an open in float and an open in bottom are wholly
+--- independent live entries and neither orphans the other's window.
+---@param layout string  "float" | "area" | "bottom"
+---@return LvimShellPanel
+local function panel_state(layout)
+    panels[layout] = panels[layout]
+        or {
+            state = nil,
+            term_buf = nil,
+            term_win = nil,
+            job = nil,
+            _down = false,
+            _parking = false,
+            _docked = false,
+            key = nil,
+            consumer = nil,
+            config = nil,
+            method = nil,
+            pending_cmd = nil,
+            pending_suffix = "<CR>",
+            pending_opener = nil,
+        }
+    return panels[layout]
+end
+
+--- Find the live panel whose terminal buffer is `buf`, or nil. The public keymap-invoked entry points
+--- (`M.close` / `M.set_method`) fire while focus is INSIDE the terminal — its buffer is current — so they
+--- resolve WHICH layout's session they act on from the current buffer (there is no layout in the map's rhs).
+---@param buf integer
+---@return LvimShellPanel?
+local function panel_of_buf(buf)
+    for _, p in pairs(panels) do
+        if p.term_buf == buf then
+            return p
+        end
+    end
+    return nil
+end
+
+--- The module M — the public per-call launcher API. NO session state lives on M: it is all PER LAYOUT in
+--- `panels` (so a shell can live in several layouts at once). Only the stateless entry points hang here.
+local M = {}
+
+--- The stable dock id — lvim-shell's BASE identity (NOT layout-encoded). The dock composes the ENTRY KEY as
+--- (id, layout), so this one id yields a distinct entry per layout it is open in.
+---@type string
+local DOCK_ID = "lvim-shell"
+
+--- Cached `lvim-utils.dock` module — nil = unprobed, false = probed & absent (an older lvim-utils without the
+--- dock manager; then lvim-shell opens its frame directly, un-managed — the standalone fallback).
+---@type table|false|nil
+local dock_mod = nil
+
+--- The dock-stack manager, or nil when lvim-utils lacks it. Opening THROUGH it is what enforces the
+--- one-visible-per-layout invariant (any other consumer in the target layout is PARKED, not overlapped).
+---@return table?
+local function get_dock()
+    if dock_mod == nil then
+        local ok, m = pcall(require, "lvim-utils.dock")
+        dock_mod = ok and m or false
+    end
+    return dock_mod or nil
+end
+
+--- Build the live effective config for a session: the per-call user config merged over the defaults into a
+--- FRESH deepcopy (shared lvim-utils.utils.merge, with a vim.tbl_deep_extend fallback). Never mutates
+--- `base_config` — the target is a deepcopy.
 ---@param user_config table|nil
-local function set_config(user_config)
+---@return LvimShellConfig
+local function build_config(user_config)
     local merged = vim.deepcopy(base_config)
     if user_config == nil then
-        config = merged
-        return
+        return merged
     end
     local ok, uu = pcall(require, "lvim-utils.utils")
     if ok and type(uu.merge) == "function" then
-        config = uu.merge(merged, user_config)
-    else
-        config = vim.tbl_deep_extend("force", merged, user_config)
+        return uu.merge(merged, user_config)
     end
+    return vim.tbl_deep_extend("force", merged, user_config)
 end
 
 --- OPTIONAL persistent setup: deep-merge `opts` into the module's DEFAULT config (`base_config`) IN PLACE, so
 --- they become the effective defaults for every subsequent M.float / M.split. Additive and backward-compatible
 --- — the plugin works without ever calling it, and a per-call `user_config` still overrides these defaults
---- (`set_config` deepcopies the updated `base_config`, then merges the per-call table over it). Uses the shared
---- lvim-utils.utils.merge (clean array-replace) when present, else a guarded `vim.tbl_deep_extend`.
----@return nil
+--- (`build_config` deepcopies the updated `base_config`, then merges the per-call table over it). Uses the
+--- shared lvim-utils.utils.merge (clean array-replace) when present, else a guarded `vim.tbl_deep_extend`.
+---
 --- Configure lvim-shell and register its command surface. `opts` is the base config (float / mappings / …)
 --- PLUS two addon keys owned by setup (so a consumer only calls setup and gets `:LvimShell`):
 ---   • `addons`          — per-addon registry overrides (e.g. `{ neomutt = { config = { env = {…} } } }`)
 ---   • `addon_commands`  — when true, also register the per-addon `:Lvim<Name>` shortcut commands
 --- Always registers the canonical `:LvimShell <name> [float|area|bottom] [dir]` command (the addon launcher).
 ---@param opts? table
+---@return nil
 function M.setup(opts)
     opts = opts and vim.deepcopy(opts) or {}
     -- Split the addon-owned keys out so they never leak into the shell's base config.
@@ -230,11 +352,13 @@ local function slashed(path)
     return path
 end
 
---- Ensure `config.files` is populated with fresh per-session temp files when the user did not pin explicit ones.
+--- Ensure the session's `config.files` is populated with fresh per-session temp files when the user did not pin
+--- explicit ones.
+---@param panel LvimShellPanel
 ---@return nil
-local function ensure_files()
-    if not config.files then
-        config.files = {
+local function ensure_files(panel)
+    if not panel.config.files then
+        panel.config.files = {
             list = slashed(vim.fn.tempname()),
             qf = slashed(vim.fn.tempname()),
             query = slashed(vim.fn.tempname()),
@@ -252,23 +376,29 @@ end
 --- Absolutize a result path the command emitted. Paths are RELATIVE to `config.cwd` (the dir the command ran in),
 --- not Neovim's cwd, so join a non-absolute line onto `config.cwd`. Absolute inputs (POSIX `/…`, a Windows drive
 --- `X:\…` / `X:/…`, or a UNC `\\…`) and the empty string pass through unchanged.
+---@param panel LvimShellPanel
 ---@param path string
 ---@return string
-local function resolve_result_path(path)
+local function resolve_result_path(panel, path)
     if path == "" or path:match("^%a:[\\/]") or path:sub(1, 1) == "/" or path:sub(1, 2) == "\\\\" then
         return path
     end
-    local cwd = config and config.cwd
+    local cwd = panel.config and panel.config.cwd
     if type(cwd) == "string" and cwd ~= "" then
         return vim.fs.normalize(cwd .. "/" .. path)
     end
     return path
 end
 
---- Set the pending open METHOD for the next batch of emitted files.
+--- Set the pending open METHOD for the next batch of files the shell FOCUSED in `buf` emits. Public because the
+--- t-mode method chords fire it from a `<cmd>` rhs; it resolves the session from the current (terminal) buffer.
 ---@param opt string a Vim command ("edit"/"tabedit"/"split | edit"/…) or "qf"
+---@return nil
 function M.set_method(opt)
-    method = opt
+    local panel = panel_of_buf(vim.api.nvim_get_current_buf())
+    if panel then
+        panel.method = opt
+    end
 end
 
 --- The grep-style quickfix row pattern: `file:line:col:text`.
@@ -298,15 +428,20 @@ local function parse_qf_line(line)
     return filename, lnum, col, text
 end
 
---- Read the results the command emitted and act on them (quickfix for METHOD "qf", else open each with METHOD),
---- consuming the result files and resetting METHOD.
+--- Read the results the session's command emitted and act on them (quickfix for METHOD "qf", else open each
+--- with METHOD), consuming the result files and resetting METHOD.
+---@param panel LvimShellPanel
 ---@return nil
-local function check_files()
-    local files = config and config.files
+local function check_files(panel)
+    local config = panel.config
+    if not config then
+        return
+    end
+    local files = config.files
     if not files then
         return
     end
-    if method == "qf" then
+    if panel.method == "qf" then
         local f = io.open(files.query, "r")
         local title = "LVIM SHELL"
         if f then
@@ -322,7 +457,7 @@ local function check_files()
             for line in io.lines(files.qf) do
                 local filename, line_number, column, text = parse_qf_line(line)
                 table.insert(qf_list.items, {
-                    filename = filename ~= nil and resolve_result_path(filename) or "",
+                    filename = filename ~= nil and resolve_result_path(panel, filename) or "",
                     lnum = tonumber(line_number) or 1,
                     end_lnum = tonumber(line_number) or 1,
                     col = tonumber(column) or 1,
@@ -330,7 +465,7 @@ local function check_files()
                     text = text,
                 })
             end
-            method = config.edit_cmd
+            panel.method = config.edit_cmd
             os.remove(files.qf)
             os.remove(files.list)
             os.remove(files.query)
@@ -340,14 +475,14 @@ local function check_files()
             local qf_list = { title = title, items = {} }
             for line in io.lines(files.list) do
                 table.insert(qf_list.items, {
-                    filename = resolve_result_path(line),
+                    filename = resolve_result_path(panel, line),
                     lnum = 1,
                     end_lnum = 1,
                     col = 1,
                     col_end = 1,
                 })
             end
-            method = config.edit_cmd
+            panel.method = config.edit_cmd
             os.remove(files.list)
             os.remove(files.qf)
             os.remove(files.query)
@@ -357,9 +492,9 @@ local function check_files()
     else
         if file_exists(files.list) then
             for line in io.lines(files.list) do
-                vim.cmd(method .. " " .. vim.fn.fnameescape(resolve_result_path(line)))
+                vim.cmd(panel.method .. " " .. vim.fn.fnameescape(resolve_result_path(panel, line)))
             end
-            method = config.edit_cmd
+            panel.method = config.edit_cmd
             os.remove(files.list)
             os.remove(files.qf)
             os.remove(files.query)
@@ -367,90 +502,153 @@ local function check_files()
     end
 end
 
---- After the shell closes: act on the emitted files, reload changed buffers, run the on_close hooks.
+--- After the session closes: act on the emitted files, reload changed buffers, run the on_close hooks.
+---@param panel LvimShellPanel
 ---@return nil
-local function on_exit()
-    check_files()
+local function on_exit(panel)
+    check_files(panel)
     vim.cmd([[ checktime ]])
-    for _, func in ipairs(config.on_close or {}) do
+    for _, func in ipairs(panel.config.on_close or {}) do
         pcall(func)
     end
 end
 
---- Tear down the shell: stop the job, wipe the terminal buffer, act on the results, reset state. Guarded
+--- Tear down the session: stop the job, wipe the terminal buffer, act on the results, reset state. Guarded
 --- against re-entry (the frame's on_close, the job's on_exit and M.close can all trigger it).
+---
+--- PARK GUARD: while the dock manager PARKS the shell (`park`), the frame is closed only to drop its WINDOW —
+--- the running app + its terminal buffer must SURVIVE so a later dock re-show re-attaches them. teardown is the
+--- frame's provider/cfg `on_close`, so a park would otherwise kill the job here. `panel._parking` short-circuits
+--- it to a no-op; `park` clears the window-level state itself.
+---@param panel LvimShellPanel
 ---@return nil
-local function teardown()
-    if M._down then
+local function teardown(panel)
+    if panel._parking then
         return
     end
-    M._down = true
-    if M.job and M.job > 0 and vim.fn.jobwait({ M.job }, 0)[1] == -1 then
-        pcall(vim.fn.jobstop, M.job)
+    if panel._down then
+        return
     end
-    if M.term_buf and vim.api.nvim_buf_is_valid(M.term_buf) then
-        pcall(vim.api.nvim_buf_delete, M.term_buf, { force = true })
+    panel._down = true
+    if panel.job and panel.job > 0 and vim.fn.jobwait({ panel.job }, 0)[1] == -1 then
+        pcall(vim.fn.jobstop, panel.job)
     end
-    pcall(on_exit)
-    M.state, M.term_buf, M.term_win, M.job = nil, nil, nil, nil
+    if panel.term_buf and vim.api.nvim_buf_is_valid(panel.term_buf) then
+        pcall(vim.api.nvim_buf_delete, panel.term_buf, { force = true })
+    end
+    pcall(on_exit, panel)
+    panel._docked = false
+    panel.state, panel.term_buf, panel.term_win, panel.job = nil, nil, nil, nil
 end
 
---- Close the shell (idempotent). Routes through the frame so the chassis tears its windows down cleanly.
+--- Real teardown routed through the frame so the chassis tears its windows down cleanly (the frame's
+--- provider/cfg `on_close` = `teardown`); falls back to a direct `teardown` when there is no frame. This is the
+--- FULL close — it does NOT notify the dock (the caller decides whether to). Idempotent.
+---@param panel LvimShellPanel
+---@return nil
+local function close_frame(panel)
+    if panel.state and type(panel.state.close) == "function" then
+        pcall(panel.state.close) -- → provider/cfg on_close = teardown
+    else
+        teardown(panel)
+    end
+end
+
+--- PARK the session for the dock manager (`consumer.hide`): close the frame WINDOW while KEEPING the running app
+--- + its terminal buffer alive, so a later dock re-show re-attaches them (the manager's "hide" = memory, never
+--- destroy). `panel._parking` suppresses the frame's `on_close` teardown for the duration; the window-level
+--- state is cleared here. A no-op when nothing is shown.
+---@param panel LvimShellPanel
+---@return nil
+local function park(panel)
+    if not panel.state then
+        return
+    end
+    panel._parking = true
+    if type(panel.state.close) == "function" then
+        pcall(panel.state.close) -- frame drops its windows; teardown short-circuits (parking) → job + buffer survive
+    end
+    panel.state, panel.term_win = nil, nil
+    panel._parking = false
+end
+
+--- Close the session (idempotent, the SELF-close path — the `<C-Space>` close key, the app exiting on its own,
+--- the frame's on_escape, the footer close button). Tears the frame down, then — when the session was opened
+--- THROUGH the dock — notifies the manager by its STORED ENTRY KEY (`dock.closed(panel.key)`) so it drops THIS
+--- (id, layout) entry from its stack and reveals the LIFO-next parked consumer (or collapses that layout). No
+--- stale window is left behind. Other layouts' entries are untouched.
+---@param panel LvimShellPanel
+---@return nil
+local function do_self_close(panel)
+    local d = get_dock()
+    local docked = panel._docked -- capture BEFORE teardown resets it
+    local key = panel.key
+    close_frame(panel)
+    if d and docked and key then
+        pcall(d.closed, key)
+    end
+end
+
+--- The public self-close entry point (bound on the terminal buffer's close / force-close keys via a `<cmd>`
+--- rhs). It resolves WHICH layout's session to close from the current (terminal) buffer, then self-closes it.
 ---@return nil
 function M.close()
-    if M.state and type(M.state.close) == "function" then
-        pcall(M.state.close) -- → cfg.on_close = teardown
-    else
-        teardown()
+    local panel = panel_of_buf(vim.api.nvim_get_current_buf())
+    if panel then
+        do_self_close(panel)
     end
 end
 
---- The terminal job environment: the user's `config.env` plus the LVIM_SHELL_* result-file paths.
+--- The terminal job environment: the session's `config.env` plus the LVIM_SHELL_* result-file paths.
+---@param panel LvimShellPanel
 ---@return table<string, string>
-local function job_env()
-    return vim.tbl_extend("force", config.env or {}, {
-        LVIM_SHELL_FILE = config.files.list,
-        LVIM_SHELL_QF = config.files.qf,
-        LVIM_SHELL_QUERY = config.files.query,
+local function job_env(panel)
+    return vim.tbl_extend("force", panel.config.env or {}, {
+        LVIM_SHELL_FILE = panel.config.files.list,
+        LVIM_SHELL_QF = panel.config.files.qf,
+        LVIM_SHELL_QUERY = panel.config.files.query,
     })
 end
 
---- Start `cmd` as a terminal job that CONVERTS the buffer shown in `win` (which must be `M.term_buf`). The job
---- is created INSIDE the panel window (`nvim_win_call`) so its PTY is sized to the FINAL panel geometry and
---- auto-resizes with it — mirroring the picker's fzf provider (`termopen` inside `nvim_win_call`). Starting it
---- outside the window (against the pre-reflow current size) is what left a dock half-filled. Returns
---- false on failure.
----@param win integer the panel window hosting `M.term_buf`
+--- Start the session's `cmd` as a terminal job that CONVERTS the buffer shown in `win` (which must be
+--- `panel.term_buf`). The job is created INSIDE the panel window (`nvim_win_call`) so its PTY is sized to the
+--- FINAL panel geometry and auto-resizes with it — mirroring the picker's fzf provider (`termopen` inside
+--- `nvim_win_call`). Starting it outside the window (against the pre-reflow current size) is what left a dock
+--- half-filled. Returns false on failure.
+---@param panel LvimShellPanel
+---@param win integer the panel window hosting `panel.term_buf`
 ---@param cmd string|string[]
 ---@return boolean ok
-local function start_terminal(win, cmd)
+local function start_terminal(panel, win, cmd)
     vim.api.nvim_win_call(win, function()
-        M.job = vim.fn.jobstart(cmd, {
+        panel.job = vim.fn.jobstart(cmd, {
             term = true,
             on_exit = function(job_id)
-                if M.job == job_id then
+                if panel.job == job_id then
                     vim.schedule(function()
-                        M.close()
+                        do_self_close(panel)
                     end)
                 end
             end,
-            env = job_env(),
-            cwd = config.cwd,
+            env = job_env(panel),
+            cwd = panel.config.cwd,
         })
     end)
-    return type(M.job) == "number" and M.job > 0
+    return type(panel.job) == "number" and panel.job > 0
 end
 
 --- Bind the terminal buffer's keys: the t-mode open-method chords (leave terminal mode, set METHOD, re-enter
 --- insert + replay `suffix`), close / force-close, the footer jump (frame sector-down), plus the chassis nav
 --- keys (<C-j>/<C-k>) — the frame binds those on its scratch buffer, so a hosted terminal must rebind them on
---- its OWN buffer. ESC is always passed through to the program.
----@param buf integer the terminal buffer
+--- its OWN buffer. ESC is always passed through to the program. The method / close chords fire a `<cmd>` rhs
+--- into the public `M.set_method` / `M.close`, which resolve THIS session from the (current) terminal buffer.
+---@param panel LvimShellPanel
 ---@param suffix string the key replayed after a method key (e.g. "<CR>")
 ---@param st table the frame state (for sector navigation + close)
 ---@return nil
-local function bind_term_keys(buf, suffix, st)
-    local m = config.mappings
+local function bind_term_keys(panel, suffix, st)
+    local buf = panel.term_buf
+    local m = panel.config.mappings
     local function tmap(lhs, rhs)
         if lhs then
             vim.keymap.set("t", lhs, rhs, { buffer = buf, noremap = true, silent = true })
@@ -491,16 +689,19 @@ end
 
 --- The footer action bar (a frame `footer` spec): the open methods + close, GROUPED with a `●` divider, built via
 --- the shared `surface.footer` from `config.footer_bar` (groups of action ids) + this shell's action REGISTRY. A
---- method fires by returning to the terminal (set METHOD, focus it, re-enter insert, replay `suffix` so the
---- program acts on its cursor row); close closes. `run` keeps every button mouse-clickable.
+--- method fires by returning to the terminal (set THIS session's METHOD, focus it, re-enter insert, replay
+--- `suffix` so the program acts on its cursor row); close closes. `run` keeps every button mouse-clickable. The
+--- runs capture `panel` directly (the footer button fires while focus is on the footer sector, NOT the terminal
+--- buffer, so it cannot resolve the session from the current buffer — it must be the captured one).
+---@param panel LvimShellPanel
 ---@param suffix string
 ---@return table  a `{ bars = { { items, align } } }` footer spec
-local function footer_bar(suffix)
-    local m = config.mappings
+local function footer_bar(panel, suffix)
+    local m = panel.config.mappings
     local surface = require("lvim-ui.surface")
     local function to_term(send)
-        if M.term_win and vim.api.nvim_win_is_valid(M.term_win) then
-            vim.api.nvim_set_current_win(M.term_win)
+        if panel.term_win and vim.api.nvim_win_is_valid(panel.term_win) then
+            vim.api.nvim_set_current_win(panel.term_win)
             vim.cmd("startinsert")
             if send then
                 vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(send, true, false, true), "t", false)
@@ -509,7 +710,7 @@ local function footer_bar(suffix)
     end
     local function method_run(cmd)
         return function()
-            M.set_method(cmd)
+            panel.method = cmd
             to_term(suffix)
         end
     end
@@ -527,51 +728,19 @@ local function footer_bar(suffix)
             key = label(m.close),
             name = "close",
             run = function()
-                M.close()
+                do_self_close(panel)
             end,
         },
     }
-    local groups = config.footer_bar or { { "edit", "split", "vsplit", "tabedit", "qf" }, { "close" } }
-    return { bars = { surface.bar(groups, reg, { align = "center", separator = config.footer_separator or "●" }) } }
-end
-
---- The shared surface geometry for `layout` from lvim-utils (`config.ui.size` via `ui.size`) — the SINGLE
---- source, edited live by `:LvimUtils` / lvim-control-center. lvim-shell is frame-hosted, so lvim-utils is
---- present; the guard keeps it safe if the module is somehow missing.
----
---- A terminal has NO measurable content (it FILLS whatever window it is given), so an "auto" (fit-to-content)
---- dimension would collapse the frame to the empty terminal at geometry time. For the shell we therefore turn
---- "auto" into a FIXED fill to its cap (`auto_max`): the terminal fills up to that fraction, never shrinks to
---- nothing. A numeric fraction passes through unchanged.
----@param layout string  "float" | "area" | "bottom"
----@return table size  a surface `size` table ({ height, width? })
-local function shared_size(layout)
-    local ok, lui = pcall(require, "lvim-ui")
-    local sz = (ok and type(lui.size) == "function" and lui.size(layout))
-        or (layout == "float" and { width = { fixed = 0.9 }, height = { fixed = 0.9 } })
-        or { height = { fixed = 0.6 } }
-    local function fill(dim)
-        if dim and dim.auto then
-            return { fixed = dim.max or 0.85 }
-        end
-        return dim
-    end
-    return { height = fill(sz.height), width = fill(sz.width) }
-end
-
---- Absolute rows/cols for a resolved size dimension ({ fixed } | { auto, max } | nil), a fraction of `total`.
----@param dim table|nil
----@param total integer
----@param default number  fraction used when the dim is absent
----@return integer
-local function dim_px(dim, total, default)
-    local v = dim and (dim.fixed or (dim.auto and dim.max)) or default
-    return v < 1 and math.max(1, math.floor(total * v)) or math.floor(v)
+    local groups = panel.config.footer_bar or { { "edit", "split", "vsplit", "tabedit", "qf" }, { "close" } }
+    return {
+        bars = { surface.bar(groups, reg, { align = "center", separator = panel.config.footer_separator or "●" }) },
+    }
 end
 
 --- The terminal-hosting content provider. `update` OWNS the panel window (no `render`, so the chassis never
---- overwrites the live terminal): it swaps `M.term_buf` in, LAZILY starts the terminal job inside that window
---- the first time (so the PTY is sized to the final dock geometry — see below), re-asserts the window
+--- overwrites the live terminal): it swaps `panel.term_buf` in, LAZILY starts the terminal job inside that
+--- window the first time (so the PTY is sized to the final dock geometry — see below), re-asserts the window
 --- highlight, and (re)binds the terminal keys on the displayed buffer, since the chassis bound its nav keys on
 --- its own scratch buffer.
 ---
@@ -579,23 +748,30 @@ end
 --- reflow) AFTER the panel window is created; a terminal started against the pre-reflow size kept that smaller
 --- size and left empty rows below it. Starting it INSIDE the panel window (as the picker's fzf provider does in
 --- `start_fzf`) creates the PTY at the final size and lets nvim auto-resize it with the window.
+---@param panel LvimShellPanel
 ---@param cmd string|string[]
 ---@param suffix string
 ---@param layout string  "float" | "area" | "bottom"
 ---@return table provider
-local function terminal_provider(cmd, suffix, layout)
+local function terminal_provider(panel, cmd, suffix, layout)
     local bound
     local started = false
     return {
+        -- The provider's NATURAL content size — the frame uses it to auto-fit an auto-sized axis. A terminal has
+        -- no measurable content (it FILLS whatever window it is given), so we report the FULL resolved slot from
+        -- the SINGLE geometry authority (`lvim-utils.dock.slot`, itself `config.dock.geometry` resolved to CELLS):
+        -- an auto axis then fills to its cap instead of collapsing to an empty terminal, a fixed axis ignores it.
         size = function()
-            local sz = shared_size(layout)
-            local w = (layout == "float") and dim_px(sz.width, vim.o.columns, 0.9) or math.floor(vim.o.columns * 0.9)
-            return w, dim_px(sz.height, vim.o.lines, layout == "float" and 0.9 or 0.6)
+            -- Force plumbs through the SAME geometry authority: the per-layout anchored override wins over the
+            -- global `config.dock.geometry.<layout>` for this measure (empty {} = inherit unchanged).
+            local force = panel.config.dock.force and panel.config.dock.force[layout] or nil
+            local slot = require("lvim-utils.dock").slot(layout, force)
+            return slot.width, slot.height
         end,
         on_focus = function()
-            if M.term_win and vim.api.nvim_win_is_valid(M.term_win) then
-                vim.api.nvim_set_current_win(M.term_win)
-                if M.job then
+            if panel.term_win and vim.api.nvim_win_is_valid(panel.term_win) then
+                vim.api.nvim_set_current_win(panel.term_win)
+                if panel.job then
                     vim.cmd("startinsert")
                 end
             end
@@ -604,78 +780,86 @@ local function terminal_provider(cmd, suffix, layout)
             if not (pan.win and vim.api.nvim_win_is_valid(pan.win)) then
                 return
             end
-            M.term_win = pan.win
-            if M.term_buf and vim.api.nvim_win_get_buf(pan.win) ~= M.term_buf then
-                vim.api.nvim_win_set_buf(pan.win, M.term_buf)
+            panel.term_win = pan.win
+            if panel.term_buf and vim.api.nvim_win_get_buf(pan.win) ~= panel.term_buf then
+                vim.api.nvim_win_set_buf(pan.win, panel.term_buf)
             end
             -- Start the terminal ONCE, inside the (now final-sized) panel window. Guarded so the relayout
             -- re-calls (a host reflow, a resize) never restart the job — nvim resizes the existing PTY for us.
-            if not started and M.term_buf then
+            -- `panel.job` guards the dock RE-SHOW too: when the manager restores a PARKED shell the job is still
+            -- running, so a fresh frame must RE-ATTACH the existing buffer (swap it in above) and NOT spawn a
+            -- second job — only a genuinely fresh open (no job yet) starts one.
+            if not started and not panel.job and panel.term_buf then
                 started = true
-                vim.bo[M.term_buf].filetype = "lvim_shell"
-                if not start_terminal(pan.win, cmd) then
+                vim.bo[panel.term_buf].filetype = "lvim_shell"
+                if not start_terminal(panel, pan.win, cmd) then
                     vim.schedule(function()
-                        M.close()
+                        do_self_close(panel)
                     end)
                     return
                 end
-                -- The `on_open` hooks + the initial `startinsert` run in `open_shell` AFTER `frame.open` returns
-                -- (so `M.state` is already set for a hook that reads it) — not here, mid-open.
+                -- The `on_open` hooks + the initial `startinsert` run in `open_frame` AFTER `frame.open` returns
+                -- (so `panel.state` is already set for a hook that reads it) — not here, mid-open.
             end
             -- Re-assert AFTER the job start (TermOpen re-applies the user's window options, so this must win).
             pcall(
                 vim.api.nvim_set_option_value,
                 "winhighlight",
-                "Normal:" .. config.ui.float.float_hl,
+                "Normal:" .. panel.config.ui.float.float_hl,
                 { win = pan.win }
             )
-            pcall(vim.api.nvim_set_option_value, "winblend", config.ui.float.blend or 0, { win = pan.win })
+            pcall(vim.api.nvim_set_option_value, "winblend", panel.config.ui.float.blend or 0, { win = pan.win })
             local st = pan.frame
-            if st and bound ~= M.term_buf then
-                bound = M.term_buf
-                bind_term_keys(M.term_buf, suffix, st)
+            if st and bound ~= panel.term_buf then
+                bound = panel.term_buf
+                bind_term_keys(panel, suffix, st)
             end
         end,
-        on_close = teardown,
+        on_close = function()
+            teardown(panel)
+        end,
     }
 end
 
---- The frame title box from the config, or nil.
+--- The frame title box from the session config, or nil.
+---@param panel LvimShellPanel
 ---@return table|nil
-local function frame_title()
-    local t = config.ui.float.title
+local function frame_title(panel)
+    local t = panel.config.ui.float.title
     if not t or t == "" then
         return nil
     end
     return { text = " " .. t .. " " }
 end
 
---- Open `cmd` in a frame-hosted terminal. `layout` is "float" (centred) or a modal dock ("down" =
---- bottom, "up" = top). No-op when a shell is already open.
----@param cmd string|string[]
----@param suffix string
----@param user_config table|nil
----@param layout string
----@return nil
-local function open_shell(cmd, suffix, user_config, layout)
-    if M.term_buf and vim.api.nvim_buf_is_valid(M.term_buf) then
-        return
+--- (Re-)open the frame hosting `panel.term_buf` for `layout`, using the session's pending launch state
+--- (`pending_cmd` / `pending_suffix` / `pending_opener`). TWO callers, ONE builder:
+---   • a FRESH open (`open_shell`) — no job yet, so the provider starts the terminal inside the panel window;
+---   • a dock RE-SHOW (`consumer.show`, when the manager restores a PARKED shell) — the job is still running,
+---     so the provider re-attaches the existing buffer + job instead of spawning a second one.
+--- Focuses the terminal and enters insert; runs the `on_open` hooks only on a fresh open. Returns false (and
+--- tears down) when the frame or the job failed to come up.
+---@param panel LvimShellPanel
+---@param layout "float"|"area"|"bottom"
+---@return boolean ok
+local function open_frame(panel, layout)
+    local cmd = panel.pending_cmd
+    if not cmd then -- never nil in practice (open_shell sets it before any open); guard + narrows the type
+        return false
     end
-    set_config(user_config)
-    ensure_files()
-    config.cwd = slashed(vim.fn.fnamemodify(config.cwd or vim.fn.getcwd(), ":p"))
-    method = config.edit_cmd
-    M._down = false
-
-    -- The window the shell was opened FROM — <C-k> off the top sector (nav_up) hands focus back to it (leave the
-    -- shell UP to the real editor buffer), like the picker's on_escape_above.
-    local opener = vim.api.nvim_get_current_win()
-
-    M.term_buf = vim.api.nvim_create_buf(false, true)
-    vim.bo[M.term_buf].bufhidden = "hide"
-
+    local config = panel.config
+    if not config then -- always set by open_shell before any open; guard + narrows the type
+        return false
+    end
+    local fresh = not panel.job
+    local docked = panel._docked
+    local suffix = panel.pending_suffix
     local frame = require("lvim-ui.surface")
     local is_float = layout == "float"
+    -- The per-layout ANCHORED geometry override (empty {} = inherit the global `dock.geometry.<layout>`). It
+    -- flows into the surface as `cfg.slot` (size + auto flags) and, when it pins a backdrop, as `cfg.backdrop`.
+    ---@type LvimShellForceLayout
+    local force = (config.dock.force and config.dock.force[layout]) or {}
 
     ---@type table
     local cfg = {
@@ -685,26 +869,37 @@ local function open_shell(cmd, suffix, user_config, layout)
         -- an air band (two dark rows) above the terminal. With `header_air = false` the terminal fills directly
         -- under that one title row.
         border = config.ui.float.border or { "", " ", "", "", "", "", "", "" },
-        title = frame_title(),
+        title = frame_title(panel),
         title_pos = config.ui.float.title_pos or "center",
         title_line = "row",
         header_air = false,
         -- The terminal fills the frame directly: no inner content ring (the frame's own border is enough) — it
         -- would otherwise add a redundant blank row above + below the terminal.
-        content = { blocks = { { id = "term", provider = terminal_provider(cmd, suffix, layout), border = "none" } } },
+        content = {
+            blocks = { { id = "term", provider = terminal_provider(panel, cmd, suffix, layout), border = "none" } },
+        },
         panel_border = "none",
-        on_close = teardown,
+        -- Force geometry: NO `cfg.size` (the surface still derives the base rect from `dock.slot(layout)`), but
+        -- `cfg.slot` is the per-open anchored override that WINS for this open (height/width/auto). area/bottom
+        -- ignore width inside `dock.slot`, so the empty-{}/full-width invariant holds without a guard here.
+        slot = next(force) ~= nil and force or nil,
+        -- A pinned backdrop rides its own cfg key (the surface resolves it via `dock.slot(layout, { backdrop })`).
+        backdrop = force.backdrop,
+        on_close = function()
+            teardown(panel)
+        end,
         -- <C-k> off the TOP sector (the terminal) leaves the shell UP to the editor it opened from, instead of
         -- wrapping down to the footer.
         on_escape_above = function()
-            if opener and vim.api.nvim_win_is_valid(opener) then
-                vim.api.nvim_set_current_win(opener)
+            if panel.pending_opener and vim.api.nvim_win_is_valid(panel.pending_opener) then
+                vim.api.nvim_set_current_win(panel.pending_opener)
             end
         end,
     }
-    -- Geometry from the SHARED lvim-utils config (`config.ui.size` via `ui.size`), edited live by :LvimUtils /
-    -- lvim-control-center. float → { width, height }; area/bottom → { height } (full-width docks).
-    cfg.size = shared_size(layout)
+    -- NO `cfg.size` — the surface derives the frame geometry itself from the SINGLE authority
+    -- (`lvim-utils.dock.slot(layout)`, i.e. `config.dock.geometry` edited live by :LvimUtils / lvim-control-center;
+    -- float → centred width+height, area/bottom → full-width). The terminal provider reports that same slot as its
+    -- natural size so an auto-height frame fills rather than collapsing.
     if not is_float then
         -- "area" docks in the msgarea / cmdline zone: the surface ENGINE auto-hosts a hostless
         -- `position = "cmdline"` frame there (owns the height via the shared area cap + forces the zindex above
@@ -713,23 +908,155 @@ local function open_shell(cmd, suffix, user_config, layout)
         cfg.position = (layout == "area") and "cmdline" or "bottom"
     end
     if config.footer ~= false then
-        cfg.footer = footer_bar(suffix)
+        cfg.footer = footer_bar(panel, suffix)
     end
 
-    M.state = frame.open(cfg)
+    panel.state = frame.open(cfg)
 
-    -- The provider (running during frame.open) has swapped the terminal buffer into the panel window AND started
-    -- the job there at the final dock size. If either failed, tear down. Otherwise focus the terminal and enter
-    -- insert (the frame focuses panel 1, but make it explicit so a chord/footer replay lands in the terminal).
-    if not (M.term_win and vim.api.nvim_win_is_valid(M.term_win) and M.job and M.job > 0) then
-        M.close()
-        return
+    -- The provider (running during frame.open) has swapped the terminal buffer into the panel window AND (on a
+    -- fresh open) started the job there at the final dock size. If either failed, tear down. Otherwise focus the
+    -- terminal and enter insert (the frame focuses panel 1, but make it explicit so a chord/footer replay lands
+    -- in the terminal).
+    if not (panel.term_win and vim.api.nvim_win_is_valid(panel.term_win) and panel.job and panel.job > 0) then
+        teardown(panel)
+        -- Opened THROUGH the dock but the frame failed → drop the entry so no stale visible-id lingers. Deferred
+        -- (schedule) because this runs INSIDE the dock's own `do_show`, where re-entrant stack mutation is unsafe;
+        -- by the time it runs `dock.open` has returned and `panel.key` (the stored entry key) is set.
+        if docked then
+            local d = get_dock()
+            if d then
+                vim.schedule(function()
+                    if panel.key then
+                        pcall(d.closed, panel.key)
+                    end
+                end)
+            end
+        end
+        return false
     end
-    vim.api.nvim_set_current_win(M.term_win)
-    for _, func in ipairs(config.on_open) do
-        pcall(func)
+    vim.api.nvim_set_current_win(panel.term_win)
+    if fresh then
+        for _, func in ipairs(config.on_open) do
+            pcall(func)
+        end
     end
     vim.cmd("startinsert")
+    return true
+end
+
+--- Build (once, memoised in `panel.consumer`) + return this session's dock consumer FOR ONE LAYOUT — an
+--- `LvimDockConsumer` (the lvim-utils.dock contract; a cross-plugin type, annotated `table`). `id` is the
+--- UNCHANGED base identity ("lvim-shell") — layout is NOT baked into it; the dock composes the (id, layout) key.
+--- Because the SAME id can be open in every layout at once, there is ONE consumer PER layout, each with a fixed
+--- `layout` and each callback reading/writing its OWN `panel` slot.
+---
+--- APP-SAFETY: `buffers` returns an EMPTY table on purpose. lvim-shell launches full-screen TUI apps (vifm,
+--- lazygit, htop) that OWN every key — Esc / q / `<Leader>` / all chords. The dock installs its buffer-local
+--- `<Leader>` owner on `consumer.buffers()`; an empty `{}` makes that install a no-op (dock's `install_leader`
+--- loops over the list, so zero buffers = zero maps). So the app's terminal gets NO dock keymaps — the app
+--- keeps all its keys, closes with its OWN, and its exit closes this session (`do_self_close` → `dock.closed`).
+---@param panel LvimShellPanel
+---@param layout "float"|"area"|"bottom"
+---@return table  the LvimDockConsumer handle for this layout
+local function get_consumer(panel, layout)
+    if not panel.consumer then
+        panel.consumer = {
+            id = DOCK_ID, -- base identity, UNCHANGED across layouts — the dock keys the entry by (id, layout)
+            name = "shell",
+            icon = "", -- nf-oct-terminal (single-width Nerd glyph) for the <Leader>m dock menu row
+            layout = layout, -- which stack THIS entry joins (fixed for this per-layout consumer)
+            -- Show (or dock-restore) the frame at this layout. `ctx.rect` is the same `dock.slot(layout)` the
+            -- frame derives its own geometry from (ONE authority), so we open the frame and let it self-size.
+            show = function(ctx)
+                open_frame(panel, (ctx and ctx.layout) or layout)
+            end,
+            -- Manager PARK: drop the window, keep the running app + buffer (a re-show re-attaches).
+            hide = function()
+                park(panel)
+            end,
+            -- Manager KILL (`dock.close` / `<Leader>x`): the FULL teardown. The dock owns the bookkeeping here,
+            -- so this must NOT self-notify (that is `do_self_close`'s job on a self-close).
+            close = function()
+                close_frame(panel)
+            end,
+            is_alive = function()
+                return panel.job ~= nil and panel.job > 0 and vim.fn.jobwait({ panel.job }, 0)[1] == -1
+            end,
+            focus = function()
+                if panel.term_win and vim.api.nvim_win_is_valid(panel.term_win) then
+                    vim.api.nvim_set_current_win(panel.term_win)
+                    if panel.job then
+                        vim.cmd("startinsert")
+                    end
+                end
+            end,
+            is_current = function()
+                return panel.term_win ~= nil
+                    and vim.api.nvim_win_is_valid(panel.term_win)
+                    and vim.api.nvim_get_current_win() == panel.term_win
+            end,
+            buffers = function()
+                return {}
+            end,
+        }
+    end
+    -- Refresh the anchored geometry override per open: `do_show` feeds it to `dock.slot` as `ctx.rect`. This
+    -- session's `show` re-derives geometry through the surface itself (which reads the same override via
+    -- `cfg.slot`/`cfg.backdrop` in `open_frame`), but declaring `consumer.slot` keeps the stack consumer's
+    -- contract honest — the manager's resolved rect matches the frame's. Empty {} = no override.
+    local force = (panel.config.dock.force and panel.config.dock.force[layout]) or {}
+    panel.consumer.slot = next(force) ~= nil and force or nil
+    return panel.consumer
+end
+
+--- Open `cmd` in a frame-hosted terminal at `layout` ("float" centred, "area" cmdline dock, "bottom" bottom
+--- dock). Per-layout one-shot guard: a no-op only when a shell is ALREADY open in THIS layout (a shell in a
+--- DIFFERENT layout is a separate live entry and does not block this open). Routes THROUGH the shared dock
+--- manager when present (`dock.open`) so opening in a layout that already holds a picker / terminal PARKS that
+--- occupant instead of overlapping it (the one-visible-per-layout invariant); falls back to a direct frame open
+--- when the dock is absent (an older lvim-utils). Stores the returned dock entry KEY on the panel.
+---@param cmd string|string[]
+---@param suffix string
+---@param user_config table|nil
+---@param layout "float"|"area"|"bottom"
+---@return nil
+local function open_shell(cmd, suffix, user_config, layout)
+    local panel = panel_state(layout)
+    if panel.term_buf and vim.api.nvim_buf_is_valid(panel.term_buf) then
+        return
+    end
+    panel.config = build_config(user_config)
+    ensure_files(panel)
+    panel.config.cwd = slashed(vim.fn.fnamemodify(panel.config.cwd or vim.fn.getcwd(), ":p"))
+    panel.method = panel.config.edit_cmd
+    panel._down = false
+
+    -- Pending launch state — the dock rebuilds the frame from THIS on a re-show. `pending_opener` is the window
+    -- the shell was opened FROM: <C-k> off the top sector (nav_up) hands focus back to it (leave the shell UP to
+    -- the real editor buffer), like the picker's on_escape_above. Captured BEFORE dock.open (which may park
+    -- another consumer and shift focus).
+    panel.pending_cmd = cmd
+    panel.pending_suffix = suffix
+    panel.pending_opener = vim.api.nvim_get_current_win()
+
+    panel.term_buf = vim.api.nvim_create_buf(false, true)
+    vim.bo[panel.term_buf].bufhidden = "hide"
+
+    local d = get_dock()
+    if d and panel.config.dock.dock_stack then
+        panel._docked = true
+        -- SHOW-OR-CREATE by (id, layout) — parks any OTHER visible consumer in `layout` (zero overlap), pushes
+        -- THIS entry to the top of that stack, and calls `consumer.show` → `open_frame` synchronously. STORE the
+        -- returned ENTRY KEY: `do_self_close` passes it back to `dock.closed` for THIS entry.
+        panel.key = d.open(get_consumer(panel, layout))
+    else
+        -- Un-managed standalone open: either the dock manager is absent (older lvim-utils) OR the user turned
+        -- `dock.dock_stack` off. Geometry is STILL central (`open_frame` derives it from `dock.slot(layout)` + the
+        -- `config.dock.force[layout]` override) — the frame simply does NOT enter the stack (no park, not cyclable).
+        panel._docked = false
+        panel.key = nil
+        open_frame(panel, layout)
+    end
 end
 
 --- Open `cmd` in a centred floating terminal (frame-hosted) and act on the paths it emits.
@@ -743,7 +1070,7 @@ end
 
 --- Open `cmd` in a bottom-docked terminal (frame-hosted) and act on the paths it emits.
 --- "area" (default — the cmdline/msgarea dock, editor + statusline above, like LvimPicker) or "bottom"
---- (a bottom float dock). Sized from the shared `lvim-utils config.ui.size` (edited via :LvimUtils).
+--- (a bottom float dock). Sized from the shared `lvim-utils config.dock.geometry` (edited via :LvimUtils).
 ---@param cmd string|string[] the command to run
 ---@param suffix string the key replayed after a method key (usually "<CR>")
 ---@param user_config? table per-call config merged over the defaults (nil = defaults)

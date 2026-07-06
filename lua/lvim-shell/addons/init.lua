@@ -28,7 +28,7 @@ end
 
 -- Accepted layout subcommands (the same vocabulary as lvim-utils / LvimPicker): "float" (centred), "area" (the
 -- cmdline/msgarea dock — editor + statusline stay ABOVE it), "bottom" (a bottom float dock). down / split are
--- accepted aliases of bottom. The dock height comes from the shared `lvim-utils config.ui.size`.
+-- accepted aliases of bottom. The dock height comes from the shared `lvim-utils config.dock.geometry`.
 ---@type table<string, boolean>
 local POSITIONS = {
     float = true,
@@ -281,7 +281,7 @@ end
 
 --- Launch an addon by name inside `dir` (default cwd) via lvim-shell. `position` overrides where it opens —
 --- "float" (default, centred), "area" (cmdline/msgarea dock) or "bottom" (a bottom dock; down/split alias bottom); the dock
---- size comes from the shared `lvim-utils config.ui.size`. Notifies + returns when the name is unknown or its binary
+--- size comes from the shared `lvim-utils config.dock.geometry`. Notifies + returns when the name is unknown or its binary
 --- is missing. Pure TUIs get only the close mapping; file-returners keep the full open-method mappings.
 ---@param name string
 ---@param dir? string

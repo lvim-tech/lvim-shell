@@ -127,12 +127,15 @@ apply_hl()
 local base_config = {
     ui = {
         float = {
-            -- Frame title on the top border (blue-tinted); false/nil hides it. `border` nil → the shared
-            -- lvim-utils border. The SIZE (float width/height, area/bottom height) is NOT here — it comes from
-            -- the shared `lvim-utils config.dock.geometry` (edited via :LvimUtils / lvim-control-center).
+            -- Frame title (blue-tinted); false/nil hides it. The SIZE (float width/height, area/bottom height)
+            -- is NOT here — it comes from the shared `lvim-utils config.dock.geometry` (edited via :LvimUtils /
+            -- lvim-control-center).
             title = "LvimShell",
             title_pos = "center",
-            border = nil,
+            -- FLOAT-mode frame border (nvim's 8-cell array). Default: NO top border row — the terminal is
+            -- full-bleed and its title (a `title_line = "row"` content row) sits on the float's top edge. Set a
+            -- custom 8-cell array to add a ring/top row. (Docks keep their own top " " border, set in open_frame.)
+            border = { "", "", "", "", "", "", "", "" },
             float_hl = "LvimShellNormal",
             blend = 0,
         },
@@ -717,7 +720,7 @@ local function footer_bar(panel, suffix)
     local function label(k)
         return type(k) == "string" and (k:gsub("[<>]", "")) or ""
     end
-    -- id → { key label, name, run }. A disabled mapping (false) yields an empty key → dropped by surface.footer.
+    -- id → { key label, name, run }.
     local reg = {
         edit = { key = label(m.edit), name = "edit", run = method_run("edit") },
         split = { key = label(m.split), name = "split", run = method_run("split | edit") },
@@ -732,7 +735,27 @@ local function footer_bar(panel, suffix)
             end,
         },
     }
-    local groups = panel.config.footer_bar or { { "edit", "split", "vsplit", "tabedit", "qf" }, { "close" } }
+    -- Only a method whose mapping is actually BOUND gets a button. A pure TUI (lazygit, htop, …) launches with
+    -- its open-method mappings disabled (`edit=false, …` — so its own Ctrl-chords reach the program), and such a
+    -- button is MEANINGLESS: it emits no file to open. surface.bar keeps a name-only record (for hint labels
+    -- that carry no key), so the drop MUST happen here — filter the display groups to bound method ids; any
+    -- non-method id (close / a chassis-core id) passes through untouched.
+    local METHOD = { edit = true, split = true, vsplit = true, tabedit = true, qf = true }
+    local function id_shown(id)
+        return not METHOD[id] or (type(m[id]) == "string" and m[id] ~= "")
+    end
+    local groups = {}
+    for _, group in ipairs(panel.config.footer_bar or { { "edit", "split", "vsplit", "tabedit", "qf" }, { "close" } }) do
+        local kept = {}
+        for _, id in ipairs(group) do
+            if id_shown(id) then
+                kept[#kept + 1] = id
+            end
+        end
+        if #kept > 0 then
+            groups[#groups + 1] = kept
+        end
+    end
     return {
         bars = { surface.bar(groups, reg, { align = "center", separator = panel.config.footer_separator or "●" }) },
     }
@@ -864,11 +887,11 @@ local function open_frame(panel, layout)
     ---@type table
     local cfg = {
         mode = "float",
-        -- A terminal is full-bleed, so its title rides the TOP BORDER (a blue-tinted border-title on a top " "
-        -- padding row), NOT the default content-ROW title — a `title_line = "row"` would spend a title band PLUS
-        -- an air band (two dark rows) above the terminal. With `header_air = false` the terminal fills directly
-        -- under that one title row.
-        border = config.ui.float.border or { "", " ", "", "", "", "", "", "" },
+        -- A terminal is full-bleed: its title is a single content ROW (`title_line = "row"`) and `header_air =
+        -- false`, so the terminal fills directly under it. FLOAT uses the config border (default: no top border
+        -- row, so the title sits on the float's top edge); a DOCK (area/bottom) keeps a top " " border row so the
+        -- title reads as a bar above the terminal.
+        border = is_float and config.ui.float.border or { "", " ", "", "", "", "", "", "" },
         title = frame_title(panel),
         title_pos = config.ui.float.title_pos or "center",
         title_line = "row",

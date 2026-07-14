@@ -68,6 +68,7 @@ end
 apply_hl()
 
 ---@class LvimShellMappings
+---@field help? string         NORMAL-mode key (terminal-normal): open the keymap cheatsheet; default "g?"
 ---@field split? string        t-mode key: open the selection in a horizontal split
 ---@field vsplit? string       t-mode key: open the selection in a vertical split
 ---@field tabedit? string      t-mode key: open the selection in a new tab
@@ -118,7 +119,7 @@ apply_hl()
 ---@field footer boolean         show the navigable footer action bar (default true)
 ---@field footer_bar? string[][] groups of footer action ids
 ---@field footer_separator? string glyph dividing footer button groups
----@field mappings LvimShellMappings
+---@field mappings LvimShellMappings  the terminal's keys (`help` = the `g?` cheatsheet, terminal-NORMAL)
 ---@field files? LvimShellFiles  result-file paths (nil → per-session tempfiles); also exported to the job env
 ---@field env table<string, string>|nil extra environment for the terminal job
 ---@field cwd? string            directory the command runs in; relative result paths are resolved from it
@@ -163,11 +164,15 @@ local base_config = {
     -- disabled mapping drops its button. Edit to reorder / regroup — purely DISPLAY (the keys stay bound).
     footer_bar = {
         { "edit", "split", "vsplit", "tabedit", "qf" },
-        { "close" },
+        { "help", "close" },
     },
     -- The glyph dividing footer button groups (colour: `LvimUiFooterSep`).
     footer_separator = "●",
     mappings = {
+        -- The keymap CHEATSHEET — a terminal-NORMAL key (`<C-\><C-n>` first): in terminal-insert the hosted
+        -- program owns every key, so a plain chord like this must never be intercepted there. The `g?` window
+        -- is built from THIS table, so a rebind shows up in it; it is also a chip on the footer bar.
+        help = "g?",
         split = "<C-x>",
         vsplit = "<C-v>",
         tabedit = "<C-t>",
@@ -640,6 +645,46 @@ local function start_terminal(panel, win, cmd)
     return type(panel.job) == "number" and panel.job > 0
 end
 
+-- ── the help window (the canonical cheatsheet) ───────────────────────────────
+
+-- Mapping id → description, in display order. Built from the LIVE `config.mappings` of the SESSION (an
+-- addon may disable a method — `edit = false` — and that row then drops out).
+---@type { [1]: string, [2]: string }[]
+local HELP = {
+    { "edit", "open the selection in the calling window" },
+    { "split", "open in a horizontal split" },
+    { "vsplit", "open in a vertical split" },
+    { "tabedit", "open in a new tab" },
+    { "qf", "send the results to the quickfix list" },
+    { "footer", "jump down to the footer action bar" },
+    { "nav_up", "jump back up to the terminal" },
+    { "close", "close the shell" },
+    { "force_close", "force-close (a program that swallows the close key)" },
+    { "help", "this help" },
+}
+
+--- The shell's keymap cheatsheet — the shared `lvim-ui.help` component owns the rows, the striping, the
+--- colours and the window; this only supplies the LIVE mappings of the shell under the cursor (each session
+--- may run with its own, e.g. a pure-TUI addon that disables the open methods). Every key it lists is a
+--- terminal-NORMAL key: in terminal-insert the hosted program owns the keyboard.
+local function show_help()
+    -- the SESSION under the cursor (each layout has its own config), else the base defaults
+    local p = panel_of_buf(vim.api.nvim_get_current_buf())
+    local m = ((p and p.config) or base_config).mappings or {}
+    local items = {}
+    for _, e in ipairs(HELP) do
+        local lhs = m[e[1]]
+        if type(lhs) == "string" and lhs ~= "" then
+            items[#items + 1] = { lhs, e[2] }
+        end
+    end
+    require("lvim-ui").help({
+        title = "Shell keymaps",
+        items = items,
+        close_keys = { "q", "<Esc>", (type(m.help) == "string" and m.help) or "g?" },
+    })
+end
+
 --- Bind the terminal buffer's keys: the t-mode open-method chords (leave terminal mode, set METHOD, re-enter
 --- insert + replay `suffix`), close / force-close, the footer jump (frame sector-down), plus the chassis nav
 --- keys (<C-j>/<C-k>) — the frame binds those on its scratch buffer, so a hosted terminal must rebind them on
@@ -679,6 +724,13 @@ local function bind_term_keys(panel, suffix, st)
             vim.cmd("stopinsert")
             st.sector(-1)
         end, { buffer = buf, noremap = true, silent = true })
+    end
+    -- the keymap CHEATSHEET (terminal-NORMAL): the terminal buffer is HOSTED (swapped into the chassis panel
+    -- window), so the chassis never maps it and cannot own the `g` chord prefix itself — `surface.own_chords`
+    -- is the shared seam that does (else a `g?` typed at human speed falls through to the builtin `g`).
+    if m.help and m.help ~= "" then
+        vim.keymap.set("n", m.help, show_help, { buffer = buf, nowait = true, silent = true })
+        require("lvim-ui.surface").own_chords(buf, { m.help })
     end
     -- the chassis binds <C-j>/<C-k> on its own scratch buffer, so rebind them on the terminal buffer too
     vim.keymap.set("n", m.footer or "<C-j>", function()
@@ -734,6 +786,9 @@ local function footer_bar(panel, suffix)
                 do_self_close(panel)
             end,
         },
+        -- The cheatsheet chip: the shell's keys are Ctrl chords a hosted TUI does not advertise, so the bar
+        -- has to say where they are written down (the real key is bound in `bind_term_keys`, terminal-NORMAL).
+        help = { key = label(m.help), name = "help", no_hotkey = true, run = show_help },
     }
     -- Only a method whose mapping is actually BOUND gets a button. A pure TUI (lazygit, htop, …) launches with
     -- its open-method mappings disabled (`edit=false, …` — so its own Ctrl-chords reach the program), and such a

@@ -160,10 +160,12 @@ edited live via `:LvimUtils`: >lua
         footer = true,                       -- the navigable footer action bar
         footer_bar = {                       -- GROUPS of footer action ids
             { "edit", "split", "vsplit", "tabedit", "qf" },
-            { "close" },
+            { "help", "close" },
         },
         footer_separator = "●",              -- glyph dividing footer groups
         mappings = {
+            help = "g?",                     -- the keymap CHEATSHEET (terminal-NORMAL;
+                                             -- also a `help` chip on the footer bar)
             split = "<C-x>", vsplit = "<C-v>", tabedit = "<C-t>",
             edit = "<C-e>", close = "<C-Space>", force_close = "<C-x><C-x>",
             footer = "<C-j>", nav_up = "<C-k>", qf = "<C-q>",

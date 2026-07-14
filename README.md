@@ -382,10 +382,13 @@ local base_config = {
     footer = true, -- the navigable footer action bar (false to hide it)
     footer_bar = { -- GROUPS of footer action ids (a divider between groups); display order only
         { "edit", "split", "vsplit", "tabedit", "qf" },
-        { "close" },
+        { "help", "close" },
     },
     footer_separator = "●", -- glyph dividing the footer button groups
     mappings = {
+        -- The keymap CHEATSHEET — terminal-NORMAL (`<C-\><C-n>` first: in terminal-insert the hosted
+        -- program owns every key). Built from THIS table, so a rebind shows up in it; also a footer chip.
+        help = "g?",
         split = "<C-x>",
         vsplit = "<C-v>",
         tabedit = "<C-t>",

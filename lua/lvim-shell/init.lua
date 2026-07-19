@@ -42,7 +42,8 @@ vim.api.nvim_create_autocmd("FileType", {
     group = group,
 })
 
---- Define a highlight group as a `default` link (the standalone fallback when lvim-utils is absent).
+--- Define a highlight group as a `default` link (a fallback link for the group when lvim-utils' palette
+--- theming has not defined it; the frame chassis itself still requires lvim-ui / lvim-utils).
 ---@param name string
 ---@param link string
 local function hl_link(name, link)
@@ -469,14 +470,13 @@ local function check_files(panel)
                     lnum = tonumber(line_number) or 1,
                     end_lnum = tonumber(line_number) or 1,
                     col = tonumber(column) or 1,
-                    col_end = tonumber(column) or 1,
+                    end_col = tonumber(column) or 1,
                     text = text,
                 })
             end
             panel.method = config.edit_cmd
             os.remove(files.qf)
             os.remove(files.list)
-            os.remove(files.query)
             vim.fn.setqflist({}, " ", qf_list)
             vim.cmd("copen")
         elseif file_exists(files.list) then
@@ -487,13 +487,12 @@ local function check_files(panel)
                     lnum = 1,
                     end_lnum = 1,
                     col = 1,
-                    col_end = 1,
+                    end_col = 1,
                 })
             end
             panel.method = config.edit_cmd
             os.remove(files.list)
             os.remove(files.qf)
-            os.remove(files.query)
             vim.fn.setqflist({}, " ", qf_list)
             vim.cmd("copen")
         end
@@ -732,13 +731,19 @@ local function bind_term_keys(panel, suffix, st)
         vim.keymap.set("n", m.help, show_help, { buffer = buf, nowait = true, silent = true })
         require("lvim-ui.surface").own_chords(buf, { m.help })
     end
-    -- the chassis binds <C-j>/<C-k> on its own scratch buffer, so rebind them on the terminal buffer too
-    vim.keymap.set("n", m.footer or "<C-j>", function()
-        st.sector(1)
-    end, { buffer = buf, nowait = true, silent = true })
-    vim.keymap.set("n", m.nav_up or "<C-k>", function()
-        st.sector(-1)
-    end, { buffer = buf, nowait = true, silent = true })
+    -- the chassis binds <C-j>/<C-k> on its own scratch buffer, so rebind them on the terminal buffer too —
+    -- but only when the mapping is a real key. A `false` (user-disabled, e.g. for a chord-hungry TUI) must
+    -- NOT resurrect the default via `or "<C-j>"`; this mirrors the terminal-mode guard above.
+    if type(m.footer) == "string" then
+        vim.keymap.set("n", m.footer, function()
+            st.sector(1)
+        end, { buffer = buf, nowait = true, silent = true })
+    end
+    if type(m.nav_up) == "string" then
+        vim.keymap.set("n", m.nav_up, function()
+            st.sector(-1)
+        end, { buffer = buf, nowait = true, silent = true })
+    end
     tmap("<Esc>", "<Esc>")
 end
 
@@ -1100,7 +1105,22 @@ end
 ---@return nil
 local function open_shell(cmd, suffix, user_config, layout)
     local panel = panel_state(layout)
-    if panel.term_buf and vim.api.nvim_buf_is_valid(panel.term_buf) then
+    -- A shell genuinely OPEN in this layout (frame + windows live) → no-op (the one-shot guard).
+    if panel.state then
+        return
+    end
+    -- A PARKED shell — the dock dropped its window on a `park()` but kept the running app + terminal
+    -- buffer + job alive (`term_buf` valid, `job` running, `state` nil). The old guard returned here
+    -- too, so a launcher re-open of a parked shell was a silent no-op. RE-SHOW it instead: through the
+    -- dock when it was docked (re-pushes the entry + re-attaches via consumer.show → open_frame), else
+    -- a direct frame open. A dead session (no live job) falls through to the fresh-open body below.
+    if panel.term_buf and vim.api.nvim_buf_is_valid(panel.term_buf) and panel.job then
+        local d = get_dock()
+        if d and panel._docked then
+            panel.key = d.open(get_consumer(panel, layout))
+        else
+            open_frame(panel, layout)
+        end
         return
     end
     panel.config = build_config(user_config)

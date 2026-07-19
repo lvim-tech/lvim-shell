@@ -11,7 +11,9 @@ selected file). Ships **~55 ready-made launchers** for popular tools, exposed th
 
 ## Installation
 
-Requires Neovim >= 0.10 and [lvim-utils](https://github.com/lvim-tech/lvim-utils).
+Requires Neovim >= 0.11 (it hosts the terminal via `jobstart({ term = true })`) and
+[lvim-ui](https://github.com/lvim-tech/lvim-ui) + [lvim-utils](https://github.com/lvim-tech/lvim-utils)
+(the frame chassis + palette theming every shell open builds on).
 
 lvim-shell is a small per-call API (`require("lvim-shell").float` / `.split`) plus the bundled addons
 registry. The one line you run at startup is `require("lvim-shell.addons").command()`, which registers
@@ -34,6 +36,7 @@ lvim-installer installs plugins through Neovim's built-in `vim.pack`, so no exte
 ```lua
 vim.pack.add({
     { src = "https://github.com/lvim-tech/lvim-utils" },
+    { src = "https://github.com/lvim-tech/lvim-ui" },
     { src = "https://github.com/lvim-tech/lvim-shell" },
 })
 require("lvim-shell.addons").command()
@@ -65,8 +68,8 @@ lvim-shell is a consumer of the shared lvim-utils **dock-stack manager**, which 
 window per layout**. Opening lvim-shell in a layout (`float` / `area` / `bottom`) that already holds a
 picker or terminal **parks** that occupant (keeping its state) and shows the shell in its place — the two
 never overlap. The parked occupant stays on that layout's stack, so `<Leader>n` / `<Leader>p` cycle back to
-it, and closing the shell reveals it again. Without lvim-utils (the standalone fallback) the shell simply
-opens its frame directly.
+it, and closing the shell reveals it again. Without the dock-stack manager (an older lvim-utils, or
+`dock.dock_stack = false`) the shell simply opens its frame directly — un-managed, no parking or cycling.
 
 The dock keys every entry by **(id, layout)**, so the SAME shell opened in a *different* layout is a
 **separate live entry** — a shell can be docked in `float`, `bottom` **and** `area` **at once** (one entry

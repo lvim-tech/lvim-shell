@@ -309,7 +309,10 @@ function M.run(name, dir, position)
         return
     end
 
-    dir = vim.fn.fnamemodify((dir and dir ~= "") and vim.fn.expand(dir) or vim.fn.getcwd(), ":p")
+    -- `:p` already expands `~` (the only expansion wanted here); `vim.fn.expand` is NOT used because it
+    -- also interpolates cmdline-specials (`%` → current file, `#`, `*` …), mangling a directory that
+    -- literally contains one of those characters.
+    dir = vim.fn.fnamemodify((dir and dir ~= "") and dir or vim.fn.getcwd(), ":p")
     local cmd = a.cmd
 
     ---@type table
@@ -327,6 +330,12 @@ function M.run(name, dir, position)
 
     -- Resolve the position: explicit arg → addon default (mode) → float.
     local pos = (position and POSITIONS[position] and position) or (a.mode == "split" and "bottom") or "float"
+    -- Normalize the documented aliases to their canonical layout key. Without this, `down`/`split`
+    -- leak downstream as a bogus fourth layout: a phantom panel slot, a dock stack no other consumer
+    -- shares (breaking one-visible-per-layout vs a real `bottom`), and float-fraction geometry.
+    if pos == "down" or pos == "split" then
+        pos = "bottom"
+    end
     if pos == "float" then
         shell.float(cmd, a.suffix or "<CR>", next(cfg) ~= nil and cfg or nil)
     else

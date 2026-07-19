@@ -36,8 +36,9 @@ enforces ONE VISIBLE window per layout. Opening lvim-shell in a layout
 that occupant (keeping its state) and shows the shell in its place — the two
 never overlap. The parked occupant stays on that layout's stack, so
 `<Leader>n` / `<Leader>p` cycle back to it and closing the shell reveals it
-again. Without lvim-utils (the standalone fallback) the shell opens its frame
-directly.
+again. Without the dock-stack manager (an older lvim-utils, or
+`dock.dock_stack = false`) the shell opens its frame directly — un-managed, no
+parking or cycling.
 
 The dock keys every entry by (id, LAYOUT), so the SAME shell opened in a
 DIFFERENT layout is a SEPARATE live entry — a shell can be docked in "float",
@@ -54,12 +55,14 @@ and closes with its own; its exit closes lvim-shell.
 ==============================================================================
 2. REQUIREMENTS                                   *lvim-shell-requirements*
 
-  - Neovim >= 0.10 (uses `vim.uv`, `jobstart({ term = true })`).
-  - lvim-utils — hosts the terminal in the shared FRAME chassis (border, title,
-    footer, sector navigation), sources the geometry from
-    `config.dock.geometry`, and self-themes the colours from the palette. The
-    theming/merge helpers degrade gracefully if absent, but the frame itself is
-    required to open the shell.
+  - Neovim >= 0.11 (`jobstart({ term = true })` — the termopen replacement —
+    only exists from 0.11; also uses `vim.uv`).
+  - lvim-ui + lvim-utils — REQUIRED. lvim-ui hosts the terminal in the shared
+    FRAME/surface chassis (border, title, footer, sector navigation); lvim-utils
+    sources the geometry from `config.dock.geometry` and self-themes the colours
+    from the palette. Every shell open builds on `lvim-ui.surface`, so these are
+    hard requirements — there is no rounded-border standalone fallback (only the
+    LvimShellNormal highlight has a default link).
 
 ==============================================================================
 3. USAGE                                                 *lvim-shell-usage*

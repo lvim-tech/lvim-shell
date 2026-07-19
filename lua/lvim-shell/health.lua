@@ -1,6 +1,6 @@
--- lvim-shell.health: :checkhealth lvim-shell — the Neovim version lvim-shell needs, and whether lvim-utils is
--- present (optional — it provides the shared float border and the palette self-theming; without it lvim-shell
--- falls back to a rounded border and the builtin float highlight groups).
+-- lvim-shell.health: :checkhealth lvim-shell — the Neovim version lvim-shell needs, and that its REQUIRED
+-- chassis deps (lvim-ui for the frame/surface, lvim-utils for the palette self-theming) are present. Every
+-- shell open builds on `lvim-ui.surface`, so those are hard requirements, not optional niceties.
 --
 ---@module "lvim-shell.health"
 
@@ -10,18 +10,23 @@ function M.check()
     local health = vim.health
     health.start("lvim-shell")
 
-    if vim.fn.has("nvim-0.10") == 1 then
-        health.ok("Neovim >= 0.10")
+    -- `jobstart({ term = true })` (the termopen replacement `start_terminal` uses) only exists from
+    -- Neovim 0.11; on 0.10 it starts a non-terminal job against a scratch buffer (no PTY, no rendering).
+    if vim.fn.has("nvim-0.11") == 1 then
+        health.ok("Neovim >= 0.11")
     else
-        health.error("Neovim >= 0.10 is required (uses vim.uv + jobstart term)")
+        health.error("Neovim >= 0.11 is required (uses vim.uv + jobstart({ term = true }))")
     end
 
-    local ok_hl = pcall(require, "lvim-utils.highlight")
-    local ok_util = pcall(require, "lvim-ui.util")
-    if ok_hl and ok_util then
-        health.ok("lvim-utils found — shared float border + palette self-theming")
+    -- lvim-ui + lvim-utils are REQUIRED, not optional: open_frame / bind_term_keys / show_help all do a
+    -- bare `require("lvim-ui.surface")`, so without them any open ERRORS. There is no rounded-border
+    -- standalone fallback (only the LvimShellNormal highlight has a default link).
+    local ok_ui = pcall(require, "lvim-ui.surface")
+    local ok_utils = pcall(require, "lvim-utils.highlight")
+    if ok_ui and ok_utils then
+        health.ok("lvim-ui + lvim-utils found (frame chassis + palette self-theming)")
     else
-        health.info("lvim-utils not found — rounded border + builtin float highlights (standalone)")
+        health.error("lvim-ui + lvim-utils are REQUIRED — every shell open builds on lvim-ui.surface")
     end
 
     -- The shared dock-stack manager enforces one-visible-per-layout (no overlap) and makes the shell cyclable.

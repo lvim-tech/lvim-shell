@@ -592,7 +592,12 @@ local function do_self_close(panel)
     local key = panel.key
     close_frame(panel)
     if d and docked and key then
-        pcall(d.closed, key)
+        -- `d.closed` returns whether the entry was PARKED (kept — keep_closed + a live job) or dropped.
+        -- Keep our key when parked, so the session re-summons / a later close still targets this entry.
+        local ok, kept = pcall(d.closed, key)
+        if ok and kept then
+            panel.key = key
+        end
     end
 end
 

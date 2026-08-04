@@ -700,6 +700,10 @@ end
 ---@return nil
 local function bind_term_keys(panel, suffix, st)
     local buf = panel.term_buf
+    -- Every mapping below is buffer-local to the terminal; without a buffer they would land GLOBALLY.
+    if not buf then
+        return
+    end
     local m = panel.config.mappings
     local function tmap(lhs, rhs)
         if lhs then
@@ -810,9 +814,11 @@ local function footer_bar(panel, suffix)
         return not METHOD[id] or (type(m[id]) == "string" and m[id] ~= "")
     end
     local groups = {}
-    for _, group in ipairs(panel.config.footer_bar or { { "edit", "split", "vsplit", "tabedit", "qf" }, { "close" } }) do
+    for _, bar_group in
+        ipairs(panel.config.footer_bar or { { "edit", "split", "vsplit", "tabedit", "qf" }, { "close" } })
+    do
         local kept = {}
-        for _, id in ipairs(group) do
+        for _, id in ipairs(bar_group) do
             if id_shown(id) then
                 kept[#kept + 1] = id
             end

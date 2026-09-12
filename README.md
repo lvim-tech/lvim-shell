@@ -11,7 +11,7 @@ selected file). Ships **~55 ready-made launchers** for popular tools, exposed th
 
 ## Installation
 
-Requires Neovim >= 0.11 (it hosts the terminal via `jobstart({ term = true })`) and
+Requires Neovim >= 0.12 (it hosts the terminal via `jobstart({ term = true })`) and
 [lvim-ui](https://github.com/lvim-tech/lvim-ui) + [lvim-utils](https://github.com/lvim-tech/lvim-utils)
 (the frame chassis + palette theming every shell open builds on).
 

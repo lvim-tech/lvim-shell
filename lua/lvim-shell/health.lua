@@ -12,10 +12,11 @@ function M.check()
 
     -- `jobstart({ term = true })` (the termopen replacement `start_terminal` uses) only exists from
     -- Neovim 0.11; on 0.10 it starts a non-terminal job against a scratch buffer (no PTY, no rendering).
-    if vim.fn.has("nvim-0.11") == 1 then
-        health.ok("Neovim >= 0.11")
+    -- The floor checked is the set's, 0.12.
+    if vim.fn.has("nvim-0.12") == 1 then
+        health.ok("Neovim >= 0.12")
     else
-        health.error("Neovim >= 0.11 is required (uses vim.uv + jobstart({ term = true }))")
+        health.error("Neovim >= 0.12 is required (the lvim-tech set targets 0.12; lvim-utils requires it)")
     end
 
     -- lvim-ui + lvim-utils are REQUIRED, not optional: open_frame / bind_term_keys / show_help all do a

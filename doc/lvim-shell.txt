@@ -55,7 +55,7 @@ and closes with its own; its exit closes lvim-shell.
 ==============================================================================
 2. REQUIREMENTS                                   *lvim-shell-requirements*
 
-  - Neovim >= 0.11 (`jobstart({ term = true })` — the termopen replacement —
+  - Neovim >= 0.12 (`jobstart({ term = true })` — the termopen replacement —
     only exists from 0.11; also uses `vim.uv`).
   - lvim-ui + lvim-utils — REQUIRED. lvim-ui hosts the terminal in the shared
     FRAME/surface chassis (border, title, footer, sector navigation); lvim-utils

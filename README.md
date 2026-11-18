@@ -387,7 +387,7 @@ local base_config = {
         { "edit", "split", "vsplit", "tabedit", "qf" },
         { "help", "close" },
     },
-    footer_separator = "●", -- glyph dividing the footer button groups
+    footer_separator = "󰧞", -- glyph dividing the footer button groups
     mappings = {
         -- The keymap CHEATSHEET — terminal-NORMAL (`<C-\><C-n>` first: in terminal-insert the hosted
         -- program owns every key). Built from THIS table, so a rebind shows up in it; also a footer chip.

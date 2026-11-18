@@ -168,7 +168,7 @@ local base_config = {
         { "help", "close" },
     },
     -- The glyph dividing footer button groups (colour: `LvimUiFooterSep`).
-    footer_separator = "●",
+    footer_separator = "\u{f09de}",
     mappings = {
         -- The keymap CHEATSHEET — a terminal-NORMAL key (`<C-\><C-n>` first): in terminal-insert the hosted
         -- program owns every key, so a plain chord like this must never be intercepted there. The `g?` window
@@ -828,7 +828,7 @@ local function footer_bar(panel, suffix)
         end
     end
     return {
-        bars = { surface.bar(groups, reg, { align = "center", separator = panel.config.footer_separator or "●" }) },
+        bars = { surface.bar(groups, reg, { align = "center", separator = panel.config.footer_separator or "\u{f09de}" }) },
     }
 end
 
